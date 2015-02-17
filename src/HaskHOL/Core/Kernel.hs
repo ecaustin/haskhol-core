@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-|
   Module:    HaskHOL.Core.Kernel
   Copyright: (c) The University of Kansas 2013
@@ -8,8 +9,6 @@
   Portability: unknown
 
   This module exports the logical kernel of HaskHOL.  It consists of:
-
-  * The view pattern required to pattern match on terms outside of the kernel.
 
   * A safe view of HOL theorems for HaskHOL.
 
@@ -26,37 +25,35 @@
 -}
 module HaskHOL.Core.Kernel
     ( -- * A View of HOL Types, Terms, and Theorems
-       -- ** A Quick Note on View Patterns
+       -- ** A Quick Note on Pattern Synonyms
         -- $ViewPatterns
-      view -- :: a -> b
        -- ** Destructors and Accessors for Theorems
-    , HOLThm
-    , HOLThmView(..)
-    , destThm -- :: HOLThm -> ([HOLTerm], HOLTerm)
-    , hyp     -- :: HOLThm -> [HOLTerm]
-    , concl   -- :: HOLThm -> HOLTerm
+      HOLThm
+    , pattern Thm
+    , destThm
+    , hyp
+    , concl
       -- * HOL Light Primitive Inference Rules
-    , primREFL                -- :: HOLTerm -> HOLThm
-    , primTRANS               -- :: HOLThm -> HOLThm -> Either String HOLThm
-    , primMK_COMB             -- :: HOLThm -> HOLThm -> Either String HOLThm	
-    , primABS                 -- :: HOLTerm -> HOLThm -> Either String HOLThm	
-    , primBETA                -- :: HOLTerm -> Either String HOLThm
-    , primASSUME              -- :: HOLTerm -> Maybe HOLThm
-    , primEQ_MP               -- :: HOLThm -> HOLThm -> Either String HOLThm
-    , primDEDUCT_ANTISYM_RULE -- :: HOLThm -> HOLThm -> HOLThm
-    , primINST_TYPE           -- :: Inst a b => [(a, b)] -> HOLThm -> HOLThm
-    , primINST_TYPE_FULL      -- :: SubstTrip -> HOLThm -> HOLThm
-    , primINST                -- :: HOLTermEnv -> HOLThm -> HOLThm
+    , primREFL
+    , primTRANS
+    , primMK_COMB       
+    , primABS   
+    , primBETA
+    , primASSUME
+    , primEQ_MP
+    , primDEDUCT_ANTISYM
+    , primINST_TYPE
+    , primINST_TYPE_FULL
+    , primINST
       -- * HOL2P Primitive Inference Rules
-    , primTYABS  -- :: HOLType -> HOLThm -> Either String HOLThm
-    , primTYAPP2 -- :: HOLType -> HOLType -> HOLThm -> Either String HOLThm
-    , primTYAPP  -- :: HOLType -> HOLThm -> Maybe HOLThm
-    , primTYBETA -- :: HOLTerm -> Either String HOLThm
+    , primTYABS
+    , primTYAPP2
+    , primTYAPP
+    , primTYBETA
       -- * Stateless HOL Primitive Theory Extensions
-    , axiomThm         -- :: HOLTerm -> HOLThm
-    , newDefinedConst  -- :: HOLTerm -> Either String (HOLTerm, HOLThm)
-    , newDefinedTypeOp -- :: String -> String -> String -> HOLThm -> Either 
-                       --    String (TypeOp, HOLTerm, HOLTerm, HOLThm, HOLThm)
+    , axiomThm
+    , newDefinedConst
+    , newDefinedTypeOp
       -- * Primitive Re-Exports
     , module HaskHOL.Core.Kernel.Types
     , module HaskHOL.Core.Kernel.Terms
@@ -67,12 +64,17 @@ import HaskHOL.Core.Kernel.Prims
 import HaskHOL.Core.Kernel.Types
 import HaskHOL.Core.Kernel.Terms
 
+import Data.Hashable
+
 {-
   Used to quickly make an equality between two terms we know to be of the same
   type.  Not exposed to the user.
 -}
 safeMkEq :: HOLTerm -> HOLTerm -> HOLTerm
-safeMkEq l = CombIn $ CombIn (tmEq $ typeOf l) l
+safeMkEq l r = 
+    let eq = tmEq $ typeOf l in
+      CombIn (CombIn eq l) r
+
 
 {- 
   Unions two lists of terms, ordering the result modulo alpha-equivalence.  Not
@@ -108,6 +110,12 @@ termImage :: (HOLTerm -> HOLTerm) -> [HOLTerm] -> [HOLTerm]
 termImage _ [] = []
 termImage f (h:t) = termUnion [f h] $ termImage f t
 
+termImageM :: Monad m => (HOLTerm -> m HOLTerm) -> [HOLTerm] -> m [HOLTerm]
+termImageM _ [] = return []
+termImageM f (h:t) = 
+    do h' <- f h
+       liftM (termUnion [h']) $ termImageM f t
+
 {-
    HOL Light Theorem Primitives
 -}
@@ -116,11 +124,11 @@ termImage f (h:t) = termUnion [f h] $ termImage f t
   term.
 -}
 destThm :: HOLThm -> ([HOLTerm], HOLTerm)
-destThm (ThmIn a c) = (a, c)
+destThm (ThmIn as c) = (as, c)
 
 -- | Accessor for the hypotheses, or assumption terms, of a theorem.
 hyp :: HOLThm -> [HOLTerm]
-hyp (ThmIn a _) = a
+hyp (ThmIn as _) = as
 
 -- | Accessor for the conclusion term of a theorem.
 concl :: HOLThm -> HOLTerm
@@ -141,7 +149,7 @@ concl (ThmIn _ c) = c
   Never fails.
 -}
 primREFL :: HOLTerm -> HOLThm
-primREFL t = ThmIn [] $ safeMkEq t t
+primREFL tm = ThmIn [] $ safeMkEq tm tm
 
 {-|@
  A1 |- t1 = t2   A2 |- t2 = t3
@@ -156,11 +164,11 @@ primREFL t = ThmIn [] $ safeMkEq t t
   * One, or both, of the theorem conclusions is not an equation.
 -}
 primTRANS :: HOLThm -> HOLThm -> Either String HOLThm
-primTRANS (ThmIn a1 (CombIn eql@(CombIn (ConstIn "=" _ Prim) _) m1))	
-          (ThmIn a2 (CombIn (CombIn (ConstIn "=" _ Prim) m2) r))
+primTRANS (ThmIn as1 (CombIn eql@(CombIn (TmEq _) _) m1)) (ThmIn as2 (m2 := r))
     | m1 `aConv` m2 =
-        Right . ThmIn (termUnion a1 a2) $ CombIn eql r
-    | otherwise = Left "primTRANS: middle terms don't agree"	
+        let as' = termUnion as1 as2 in
+          Right . ThmIn as' $ CombIn eql r
+    | otherwise = Left "primTRANS: middle terms don't agree"    
 primTRANS _ _ = Left "primTRANS: not both equations"
 
 -- Basic Congruence Rules
@@ -179,14 +187,13 @@ primTRANS _ _ = Left "primTRANS: not both equations"
   
   * The types of the function terms and argument terms do not agree.
 -}
-primMK_COMB :: HOLThm -> HOLThm -> Either String HOLThm	
-primMK_COMB (ThmIn a1 (CombIn (CombIn (ConstIn "=" _ Prim) l1) r1))
-            (ThmIn a2 (CombIn (CombIn (ConstIn "=" _ Prim) l2) r2)) =
+primMK_COMB :: HOLThm -> HOLThm -> Either String HOLThm 
+primMK_COMB (ThmIn as1 (l1 := r1)) (ThmIn as2 (l2 := r2)) =
     case typeOf l1 of
-      (TyAppIn (TyPrim "fun" _) (ty:_:_))
+      TyAppIn TyOpFun (ty:_:_)
           | typeOf l2 `tyAConv` ty ->
-              Right . 
-                ThmIn (termUnion a1 a2) . safeMkEq (CombIn l1 l2) $ CombIn r1 r2
+                let as' = termUnion as1 as2 in
+                  Right . ThmIn as' $ safeMkEq  (CombIn l1 l2) (CombIn r1 r2)
           | otherwise -> Left "primMK_COMB: types do not agree"
       _ -> Left "primMK_COMB: not a function type"
 primMK_COMB _ _ = Left "primMK_COMB: not both equations"
@@ -203,19 +210,19 @@ primMK_COMB _ _ = Left "primMK_COMB: not both equations"
   
   * The conclusion of the theorem is not an equation.
 -}
-primABS :: HOLTerm -> HOLThm -> Either String HOLThm	
-primABS v@VarIn{} (ThmIn a (CombIn (CombIn (ConstIn "=" _ Prim) l) r))
-    | any (varFreeIn v) a = 
-        Left "primABS: variable is free in assumptions"	
+primABS :: HOLTerm -> HOLThm -> Either String HOLThm    
+primABS v@VarIn{} (ThmIn as (l := r))
+    | any (varFreeIn v) as = 
+        Left "primABS: variable is free in assumptions" 
     | otherwise = 
-        Right . ThmIn a . safeMkEq (AbsIn v l) $ AbsIn v r
+        Right . ThmIn as $ safeMkEq (AbsIn v l) (AbsIn v r)
 primABS _ _ = Left "primABS: not an equation"
 
 -- Beta Reduction
 {-|@
-        (\\ x . t[x]) x
--------------------------------
-     |- (\\ x . t) x = t[x]
+        (\\ x . t) x
+----------------------------
+    |- (\\ x . t) x = t   
 @
 
   Fails with 'Left' in the following cases:
@@ -226,8 +233,9 @@ primABS _ _ = Left "primABS: not an equation"
     to the bound variable.
 -}
 primBETA :: HOLTerm -> Either String HOLThm
-primBETA tm@(CombIn (AbsIn bv bod) arg)
-    | arg == bv = Right . ThmIn [] $ safeMkEq tm bod
+primBETA t@(CombIn (AbsIn bv bod) arg)
+    | arg == bv = 
+          Right . ThmIn [] $ safeMkEq t bod
     | otherwise = Left "primBETA_PRIM: not a trivial beta reduction"
 primBETA _ = Left "primBETA_PRIM: not a valid application"
 
@@ -238,12 +246,12 @@ primBETA _ = Left "primBETA_PRIM: not a valid application"
    t |- t
 @
 
-  Fails with 'Nothing' if the term is not a proposition.
+  Fails with 'Left' if the term is not a proposition.
 -}
-primASSUME :: HOLTerm -> Maybe HOLThm
+primASSUME :: HOLTerm -> Either String HOLThm
 primASSUME tm
-    | typeOf tm == tyBool = Just $ ThmIn [tm] tm
-    | otherwise = Nothing
+    | typeOf tm == tyBool = Right $ ThmIn [tm] tm
+    | otherwise = Left "primASSUME"
 
 {-|@
  A1 |- t1 = t2   A2 |- t1
@@ -259,22 +267,25 @@ primASSUME tm
     equation are not alpha-equivalent.
 -}
 primEQ_MP :: HOLThm -> HOLThm -> Either String HOLThm
-primEQ_MP (ThmIn a1 (CombIn (CombIn (ConstIn "=" _ Prim) l) r)) (ThmIn a2 c)
-    | l `aConv` c = Right $ ThmIn (termUnion a1 a2) r
+primEQ_MP (ThmIn as1 (l := r)) (ThmIn as2 c)
+    | l `aConv` c = 
+          let as' = termUnion as1 as2 in
+            Right $ ThmIn as' r
     | otherwise = Left "primEQ_MP: terms do not agree"
 primEQ_MP _ _ = Left "primEQ_MP: term is not an equation"
 
 {-|@
-       A |- p       B |- q       
-----------------------------------
- (A - {q}) U (B - {p}) |- p \<=\> q
+       A |- p      B |- q       
+--------------------------------
+ (A - q) U (B - p) |- p \<=\> q
 @
 
   Never fails.
 -}
-primDEDUCT_ANTISYM_RULE :: HOLThm -> HOLThm -> HOLThm
-primDEDUCT_ANTISYM_RULE (ThmIn a p) (ThmIn b q) =
-    ThmIn (termRemove q a `termUnion` termRemove p b) $ safeMkEq p q
+primDEDUCT_ANTISYM :: HOLThm -> HOLThm -> HOLThm
+primDEDUCT_ANTISYM (ThmIn as p) (ThmIn bs q) =
+    let as' = termRemove q as `termUnion` termRemove p bs in
+      ThmIn as' $ safeMkEq p q
 
 -- Instantiation Rules
 {-|@
@@ -287,15 +298,15 @@ primDEDUCT_ANTISYM_RULE (ThmIn a p) (ThmIn b q) =
   Never fails.
 -}
 primINST_TYPE :: Inst a b => [(a, b)] -> HOLThm -> HOLThm
-primINST_TYPE tyenv (ThmIn a t) = 
+primINST_TYPE tyenv (ThmIn as t) = 
     let instFun = inst tyenv in
-      ThmIn (termImage instFun a) $ instFun t
+      ThmIn (termImage instFun as) $ instFun t
 
 -- | A version of 'primINST_TYPE' that instantiates a theorem via 'instFull'.
 primINST_TYPE_FULL :: SubstTrip -> HOLThm -> HOLThm
-primINST_TYPE_FULL tyenv (ThmIn a t) =
+primINST_TYPE_FULL tyenv (ThmIn as t) =
     let instFun = instFull tyenv in
-      ThmIn (termImage instFun a) $ instFun t
+      ThmIn (termImage instFun as) $ instFun t
 
 {-|@
  [(t1, x1), ..., (tn, xn)]   A |- t          
@@ -304,12 +315,13 @@ primINST_TYPE_FULL tyenv (ThmIn a t) =
     |- t[t1, ..., tn/x1, ..., xn]   
 @
 
-  Never fails.
+  Fails with 'Nothing' in the case where a bad substitution list is provided.
 -}
-primINST :: HOLTermEnv -> HOLThm -> HOLThm
-primINST env (ThmIn a t) = 
+primINST :: HOLTermEnv -> HOLThm -> Maybe HOLThm
+primINST env (ThmIn as t) = 
     let instFun = varSubst env in
-      ThmIn (termImage instFun a) $ instFun t
+      do as' <- termImageM instFun as 
+         liftM (ThmIn as') $ instFun t
 
 {-
    HOL2P Primitive Inference Rules
@@ -334,13 +346,12 @@ primINST env (ThmIn a t) =
   * The type variable to bind is free in the conclusion of the theorem.
 -}
 primTYABS :: HOLType -> HOLThm -> Either String HOLThm
-primTYABS tv@(TyVarIn True _) 
-             (ThmIn a (CombIn (CombIn (ConstIn "=" _ Prim) l) r))
-    | tv `notElem` typeVarsInTerms a =
+primTYABS tv@(TyVarIn True _) (ThmIn as (l := r))
+    | tv `notElem` typeVarsInTerms as =
         let fvs = frees l `union` frees r in
           if any (\ x -> tv `elem` tyVars (typeOf x)) fvs
           then Left "primTYABS: type variable is free in conclusion"
-          else Right . ThmIn a . safeMkEq (TyAbsIn tv l) $ TyAbsIn tv r
+          else Right . ThmIn as $ safeMkEq (TyAbsIn tv l) (TyAbsIn tv r)
     | otherwise =
         Left "primTYABS: type variable is free in assumptions"
 primTYABS (TyVarIn True _) _ = 
@@ -363,16 +374,16 @@ primTYABS _ _ =
   * One, or both, of the type arguments is not small.
 -}
 primTYAPP2 :: HOLType -> HOLType -> HOLThm -> Either String HOLThm
-primTYAPP2 ty1 ty2 (ThmIn a (CombIn (CombIn (ConstIn "=" _ Prim) l) r))
+primTYAPP2 ty1 ty2 (ThmIn as (l := r))
     | ty1 `tyAConv` ty2 = 
         case typeOf l of
-          UTypeIn{} 
+          UTypeIn{}
               | not $ isSmall ty1 ->
                   Left "primTYAPP2: ty1 not small"
               | not $ isSmall ty2 ->
                   Left "primTYAPP2: ty2 not small"
               | otherwise -> 
-                  Right . ThmIn a . safeMkEq (TyCombIn l ty1) $ TyCombIn r ty2
+                  Right . ThmIn as $ safeMkEq (TyCombIn l ty1) (TyCombIn r ty2)
           _ -> Left "primTYAPP2: terms not of universal type"
     | otherwise = 
         Left "primTYAPP2: type arguments not alpha-convertible"
@@ -389,13 +400,12 @@ primTYAPP2 _ _ _ = Left "primTYAPP2: conclusion not an equation"
   Note that 'primTYAPP' is equivalent to 'primTYAPP2' when the same type is
   applied to both sides, i.e. 
 
-  @ primTYAPP ty === primTYAPP2 ty ty
-  @
+  @ primTYAPP ty === primTYAPP2 ty ty @
 -}
-primTYAPP :: HOLType -> HOLThm -> Maybe HOLThm
-primTYAPP ty (ThmIn a (CombIn (CombIn (ConstIn "=" _ Prim) l) r)) = 
-    Just . ThmIn a $ safeMkEq (TyCombIn l ty) (TyCombIn r ty)
-primTYAPP _ _ = Nothing
+primTYAPP :: HOLType -> HOLThm -> Either String HOLThm
+primTYAPP ty thm@(ThmIn _ (_ := _)) = 
+    primTYAPP2 ty ty thm
+primTYAPP _ _ = Left "primTYAPP"
 
 -- Type Beta Reduction
 
@@ -414,7 +424,8 @@ primTYAPP _ _ = Nothing
 -}
 primTYBETA :: HOLTerm -> Either String HOLThm
 primTYBETA tm@(TyCombIn (TyAbsIn tv bod) argt)
-    | argt == tv = Right . ThmIn [] $ safeMkEq tm bod
+    | argt == tv = 
+          Right . ThmIn [] $ safeMkEq tm bod
     | otherwise = Left "primTYBETA: not a trivial type beta reduction"
 primTYBETA _ = Left "primTYBETA: not a valid type application"
 
@@ -432,7 +443,7 @@ primTYBETA _ = Left "primTYBETA: not a valid type application"
   axioms is not tracked until the stateful layer of the system is introduced so 
   be careful using this function.
 -}
-axiomThm :: HOLTerm -> HOLThm	
+axiomThm :: HOLTerm -> HOLThm   
 axiomThm = ThmIn []
 
 {-|@
@@ -458,13 +469,13 @@ axiomThm = ThmIn []
     the desired type of the constant.
 -} 
 newDefinedConst :: HOLTerm -> Either String (HOLTerm, HOLThm)
-newDefinedConst tm@(CombIn (CombIn (ConstIn "=" _ Prim) (VarIn cname ty)) r)
-    | not (freesIn [] r) =
+newDefinedConst ((VarIn cname ty) := r)
+    | not $ freesIn [] r =
         Left "newDefinedConst: not closed"
-    | not (subset (typeVarsInTerm r) (tyVars ty)) =
+    | not $ typeVarsInTerm r `subset` tyVars ty =
         Left "newDefinedConst: type vars not refelcted in const"
     | otherwise =        
-        let c = ConstIn cname ty $ Defined tm
+        let c = ConstIn cname ty (DefinedIn $ hash r)
             dth = ThmIn [] $ safeMkEq c r in
           Right (c, dth)
 newDefinedConst _ = Left "newDefinedConst: not an equation"
@@ -507,43 +518,43 @@ newDefinedConst _ = Left "newDefinedConst: not an equation"
 
   * The two theorems proving the bijection, as shown in the sequent above.
 -}
-newDefinedTypeOp :: String -> String -> String -> HOLThm -> 
+newDefinedTypeOp :: Text -> Text -> Text -> HOLThm -> 
                     Either String (TypeOp, HOLTerm, HOLTerm, HOLThm, HOLThm)
-newDefinedTypeOp tyname absname repname dth'@(ThmIn [] (CombIn p x))
+newDefinedTypeOp tyname absname repname (ThmIn [] c@(CombIn p x))
     | containsUType $ typeOf x =
         Left "newDefinedTypeOp: must not contain universal types"
     | not $ freesIn [] p =
         Left "newDefinedTypeOp: predicate is not closed"
     | otherwise = 
-        let tys = sort (<=) (typeVarsInTerm p)
+        let tys = sort (<=) $ typeVarsInTerm p
             arity = length tys
-            atyop = TyDefined tyname arity dth'
+            hsh = hash c
+            atyop = TyDefinedIn tyname arity hsh
             rty = typeOf x
             aty = TyAppIn atyop tys
             atm = VarIn "a" aty
             rtm = VarIn "r" rty
             absCon = ConstIn absname (TyAppIn tyOpFun [rty, aty]) $ 
-                       MkAbstract tyname arity dth'
-            repCon = ConstIn repname (TyAppIn tyOpFun [aty, rty]) $ 
-                       DestAbstract tyname arity dth' in
+                       MkAbstractIn tyname arity hsh
+            repCon = ConstIn repname (TyAppIn tyOpFun [aty, rty]) $
+                       DestAbstractIn tyname arity hsh
+            c1 = CombIn absCon $ CombIn repCon atm 
+            c2 = CombIn p rtm 
+            c3 = CombIn repCon $ CombIn absCon rtm in
           Right (atyop, absCon, repCon,
-                 ThmIn [] (safeMkEq (CombIn absCon (CombIn repCon atm)) atm),
-                 ThmIn [] (safeMkEq (CombIn p rtm) $ 
-                             safeMkEq (CombIn repCon (CombIn absCon rtm)) rtm))
+                 ThmIn [] $ safeMkEq c1 atm,
+                 ThmIn [] . safeMkEq c2 $ safeMkEq c3 rtm)
 newDefinedTypeOp _ _ _ _ = Left "newDefinedTypeOp: poorly formed predicate"
 
 
 -- Documentation copied from HaskHOL.Core.Prims
 
 {-$ViewPatterns
-  The primitive data types of HaskHOL are implemented using view patterns in
+  The primitive data types of HaskHOL are implemented using pattern synonyms in
   order to simulate private data types:
 
   * Internal constructors are hidden to prevent manual construction of terms.
 
-  * View constructors (those of 'HOLTypeView', 'HOLTermView', and 'HOLThmView') 
-    are exposed to enable pattern matching. 
-
-  * View patterns, as defined by instances of the 'view' function from the 
-    @Viewable@ class, provide a conversion between the two sets of constructors.
+  * Unideriectional pattern synonyms ('Thm', etc.) are exposed to enable 
+    pattern matching.
 -}

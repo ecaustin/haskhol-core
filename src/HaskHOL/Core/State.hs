@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, TemplateHaskell, ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies #-}
 
 {-|
   Module:    HaskHOL.Core.State
@@ -21,33 +21,33 @@
 -}
 module HaskHOL.Core.State
     ( -- * Stateful Type Primitives
-      types            -- :: HOL cls thry [(String, TypeOp)]
-    , getTypeArityCtxt -- :: HOLContext thry -> String -> Maybe Int
-    , getTypeArity     -- :: String -> HOL cls thry Int
-    , newType          -- :: String -> Int -> HOL Theory thry ()
-    , mkType           -- :: String -> [HOLType] -> HOL cls thry HOLType
-    , mkFunTy          -- :: HOLType -> HOLType -> HOL cls thry HOLType
+      types
+    , tyDefinitions
+    , getTypeArity
+    , newType
+    , mkType
+    , mkFunTy
     -- * Stateful Term Primitives
-    , constants    -- :: HOL cls thry [(String, HOLTerm)]
-    , getConstType -- :: String -> HOL cls thry HOLType
-    , newConstant  -- :: String -> HOLType -> HOL Theory thry ()
-    , mkConst      -- :: TypeSubst l r => 
-                   --    String -> [(l, r)] -> HOL cls thry HOLTerm
-    , mkConstFull  -- :: String -> SubstTrip -> HOL cls thry HOLTerm
-    , mkEq         -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
+    , constants
+    , getConstType
+    , newConstant
+    , mkConst
+    , mkConstFull
+    , mkEq
     -- * Stateful Theory Extension Primitives
-    , axioms                 -- :: HOL cls thry [(String, HOLThm)]
-    , getAxiom               -- :: String -> HOL cls thry HOLThm
-    , newAxiom               -- :: String -> HOLTerm -> HOL Theory thry HOLThm
-    , definitions            -- :: HOL cls thry [HOLThm]
-    , newBasicDefinition     -- :: HOLTerm -> HOL Theory thry HOLThm
-    , newBasicTypeDefinition -- :: String -> String -> String -> HOLThm -> 
-                             --    HOL Theory thry (HOLThm, HOLThm)
+    , axioms
+    , newAxiom
+    , getAxiom
+    , definitions
+    , newBasicDefinition
+    , getBasicDefinition
+    , newBasicTypeDefinition
+    , getBasicTypeDefinition
     -- * Primitive Debugging System
     , FlagDebug(..)
-    , warn         -- :: Bool -> String -> HOL cls thry ()
-    , printDebugLn -- :: String -> HOL cls thry a -> HOL cls thry a
-    , printDebug   -- :: String -> HOL cls thry a -> HOL cls thry a
+    , warn
+    , printDebugLn
+    , printDebug
       -- * Monad Re-Export
     , module HaskHOL.Core.State.Monad
     ) where
@@ -60,76 +60,173 @@ import HaskHOL.Core.State.Monad
 -- | Flag states whether or not to print debug statements.
 newFlag "FlagDebug" True
 
-newExtension "TypeConstants" 
-  [| [("bool", tyOpBool), ("fun", tyOpFun)] :: [(String, TypeOp)] |]
 
-newExtension "TermConstants" [| [("=", tmEq tyA)] :: [(String, HOLTerm)] |]
+data TypeConstants = TypeConstants !(Map Text TypeOp) deriving Typeable
 
-newExtension "TheAxioms" [| [] :: [(String, HOLThm)] |]
+deriveSafeCopy 0 'base ''TypeConstants
 
-{- 
-  Extensible state type for term definitions introduced via 
-  newBasicDefinition.
--}
-newExtension "TheCoreDefinitions" [| [] :: [HOLThm] |]
+insertTypeConstant :: Text -> TypeOp -> Update TypeConstants ()
+insertTypeConstant ty op =
+    do TypeConstants m <- get
+       put (TypeConstants (mapInsert ty op m))
+
+getTypeConstants ::  Query TypeConstants (Map Text TypeOp)
+getTypeConstants =
+    do TypeConstants m <- ask
+       return m
+
+makeAcidic ''TypeConstants 
+    ['insertTypeConstant, 'getTypeConstants]
+
+initTypeConstants :: Map Text TypeOp
+initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
+
+
+data TypeDefinitions = TypeDefinitions !(Map Text (HOLThm, HOLThm)) 
+    deriving Typeable
+
+deriveSafeCopy 0 'base ''TypeDefinitions
+
+insertTypeDefinition :: Text -> (HOLThm, HOLThm) -> Update TypeDefinitions ()
+insertTypeDefinition ty defs =
+    do TypeDefinitions m <- get
+       put (TypeDefinitions (mapInsert ty defs m))
+
+getTypeDefinitions :: Query TypeDefinitions (Map Text (HOLThm, HOLThm))
+getTypeDefinitions  =
+    do TypeDefinitions m <- ask
+       return m
+
+getTypeDefinition :: Text -> Query TypeDefinitions (Maybe (HOLThm, HOLThm))
+getTypeDefinition lbl =
+    do (TypeDefinitions m) <- ask
+       return $! mapLookup lbl m 
+
+makeAcidic ''TypeDefinitions 
+    ['insertTypeDefinition, 'getTypeDefinitions, 'getTypeDefinition]
+
+
+data TermConstants = TermConstants !(Map Text HOLTerm) deriving Typeable
+
+deriveSafeCopy 0 'base ''TermConstants
+
+insertTermConstant :: Text -> HOLTerm -> Update TermConstants ()
+insertTermConstant tm op =
+    do TermConstants m <- get
+       put (TermConstants (mapInsert tm op m))
+
+getTermConstants :: Query TermConstants (Map Text HOLTerm)
+getTermConstants =
+    do TermConstants m <- ask
+       return m
+
+makeAcidic ''TermConstants 
+    ['insertTermConstant, 'getTermConstants]
+
+initTermConstants :: Map Text HOLTerm
+initTermConstants = mapFromList [("=", tmEq tyA)]
+
+data TheAxioms = TheAxioms !(Map Text HOLThm) deriving Typeable
+
+deriveSafeCopy 0 'base ''TheAxioms
+
+insertAxiom :: Text -> HOLThm -> Update TheAxioms ()
+insertAxiom lbl thm =
+    do TheAxioms m <- get
+       put (TheAxioms (mapInsert lbl thm m))
+
+getAxioms :: Query TheAxioms (Map Text HOLThm)
+getAxioms =
+    do TheAxioms m <- ask
+       return m
+
+getAxiom' :: Text -> Query TheAxioms (Maybe HOLThm)
+getAxiom' lbl =
+    do TheAxioms m <- ask
+       return $! mapLookup lbl m
+
+makeAcidic ''TheAxioms ['insertAxiom, 'getAxioms, 'getAxiom']
+
+
+data TheCoreDefinitions = 
+    TheCoreDefinitions !(Map Text HOLThm) deriving Typeable
+
+deriveSafeCopy 0 'base ''TheCoreDefinitions
+
+insertCoreDefinition :: Text -> HOLThm -> Update TheCoreDefinitions ()
+insertCoreDefinition lbl thm =
+    do TheCoreDefinitions defs <- get
+       put (TheCoreDefinitions (mapInsert lbl thm defs))
+
+getCoreDefinitions :: Query TheCoreDefinitions [HOLThm]
+getCoreDefinitions =
+    do TheCoreDefinitions defs <- ask
+       return $! mapElems defs
+
+getCoreDefinition :: Text -> Query TheCoreDefinitions (Maybe HOLThm)
+getCoreDefinition name =
+    do (TheCoreDefinitions defs) <- ask
+       return $! name `mapLookup` defs
+
+makeAcidic ''TheCoreDefinitions 
+    ['insertCoreDefinition, 'getCoreDefinitions, 'getCoreDefinition]
+
 
 -- Stateful HOL Light Type Primitives
 {-|
-  Retrieves the list of type constants from the current working theory.  The
-  list contains pairs of strings recognized by the parser and the associated
+  Retrieves the 'Map' of type constants from the current working theory.  The
+  mapping pairs strings recognized by the parser with the associated
   type operator value, i.e. 
 
   > ("bool", tyOpBool)
 -}
-types :: HOL cls thry [(String, TypeOp)]
+types :: HOL cls thry (Map Text TypeOp)
 types =
-    do (TypeConstants tys) <- getExt
-       return tys
+    do acid <- openLocalStateHOL (TypeConstants initTypeConstants)
+       m <- queryHOL acid GetTypeConstants
+       closeAcidStateHOL acid
+       return m
 
--- needed for parser
-{-| 
-  Retrieves the arity of a given type constant.  Fails with 'Nothing' if the
-  provided type constant name is not defined in the provided context.
-
-  Note that this function takes a 'HOLContext' argument such that it can be
-  used outside of 'HOL' computations; for example, in the parser.
--}
-getTypeArityCtxt :: HOLContext thry -> String -> Maybe Int
-getTypeArityCtxt ctx name =
-    let (TypeConstants tys) = getExtCtxt ctx in
-      do tyOp <- lookup name tys
-         return . snd $ destTypeOp tyOp
+-- | Retrieves the 'Map' of type definitions from the current working theory.
+tyDefinitions :: HOL cls thry (Map Text (HOLThm, HOLThm))
+tyDefinitions =
+    do acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
+       m <- queryHOL acid GetTypeDefinitions
+       closeAcidStateHOL acid
+       return m
 
 {-|
-  A version of 'getTypeArityCtxt' that operates over the current working theory
-  of a 'HOL' computation.  Throws a 'HOLException' if the provided type constant
+  Returns the arity associated with a type constant.
+  Throws a 'HOLException' if the provided type constant
   name is not defined.
 -}
-getTypeArity :: String -> HOL cls thry Int
+getTypeArity :: Text -> HOL cls thry Int
 getTypeArity name =
-    do ctxt <- get
-       liftMaybe ("getTypeArity: type " ++ name ++ " has not been defined.") $
-         getTypeArityCtxt ctxt name
+    do tys <- types
+       liftMaybe ("getTypeArity: type " ++ show name ++ 
+                  " has not been defined.") .
+         liftM (snd . destTypeOp) $ mapLookup name tys
 
 {- 
   Primitive type constant construction function.  Used by newType and 
   newBasicTypeDefinition.  Not exposed to the user.
 -}
-newType' :: String -> TypeOp -> HOL Theory thry ()
+newType' :: Text -> TypeOp -> HOL Theory thry ()
 newType' name tyop =
     do failWhen (can getTypeArity name) $
-         "newType: type " ++ name ++ " has already been declared."
-       modifyExt $ \ (TypeConstants consts) -> 
-                       TypeConstants $ (name, tyop) : consts
+         "newType: type " ++ show name ++ " has already been declared."
+       acid <- openLocalStateHOL (TypeConstants initTypeConstants)
+       updateHOL acid (InsertTypeConstant name tyop)
+       createCheckpointAndCloseHOL acid
 
 {-| 
   Constructs a new primitve type constant of a given name and arity.  Also adds
   this new type to the current working theory.  Throws a 'HOLException' when a 
   type of the same name has already been declared.
 -}
-newType :: String -> Int -> HOL Theory thry ()
+newType :: Text -> Int -> HOL Theory thry ()
 newType name arity = 
-    newType' name $ newPrimTypeOp name arity
+    newType' name $ newPrimitiveTypeOp name arity
 
 {-|
   Constructs a type application given an operator name and a list of argument
@@ -141,26 +238,26 @@ newType name arity =
 
   * A type operator is applied to zero arguments.
 -}
-mkType :: String -> [HOLType] -> HOL cls thry HOLType
+mkType :: Text -> [HOLType] -> HOL cls thry HOLType
 mkType name args =
-    do (TypeConstants consts) <- getExt
-       case lookup name consts of
-         Just tyOp -> liftEither "mkType: type constructor application failed" $
-                        tyApp tyOp args
+    do consts <- types
+       case mapLookup name consts of
+         Just tyOp -> tyApp tyOp args <#?> 
+                        "mkType: type constructor application failed"
          Nothing -> 
            {- This seemed to be the easiest way to supress superfluous warnings
               when parsing type operators. -}
-           do name' <- case name of
-                         '_':x -> return x
-                         _ -> printDebugLn 
-                                ("warning - mkType: type " ++ name ++ " has " ++
-                                 "not been defined.  Defaulting to type " ++ 
-                                 "operator variable.") $ 
-                                return name
+           do name' <- if textHead name == '_'
+                       then return $! textTail name
+                       else printDebugLn 
+                              ("warning - mkType: type " ++ show name ++ 
+                               " has not been defined.  Defaulting to type " ++ 
+                               "operator variable.") $ 
+                              return name
               failWhen (return $ null args)
                 "mkType: type operator applied to zero args."
-              liftEither "mkType: type operator variable application failed" $ 
-                tyApp (mkTypeOpVar name') args
+              tyApp (mkTypeOpVar name') args <#?> 
+                "mkType: type operator variable application failed"
 
 {-|
   Constructs a function type safely using 'mkType'.  Should never fail provided
@@ -171,47 +268,53 @@ mkFunTy ty1 ty2 = mkType "fun" [ty1, ty2]
 
 -- State for Constants
 {-|
-  Retrieves the list of term constants from the current working theory.  The
-  list contains pairs of strings recognized by the parser and the associated
+  Retrieves the 'Map' of term constants from the current working theory.  The
+  mapping pairs strings recognized by the parser and the associated
   term constant value, i.e. 
 
   > ("=", tmEq tyA)
 -}
-constants :: HOL cls thry [(String, HOLTerm)]
+constants :: HOL cls thry (Map Text HOLTerm)
 constants =
-    do (TermConstants consts) <- getExt
-       return consts
+    do acid <- openLocalStateHOL (TermConstants initTermConstants)
+       m <- queryHOL acid GetTermConstants
+       closeAcidStateHOL acid
+       return m
 
 {-|
   Retrieves the type of a given term constant.  Throws a 'HOLException' if the
   provided term constant name is not defined.
 -}
-getConstType :: String -> HOL cls thry HOLType
+getConstType :: Text -> HOL cls thry HOLType
 getConstType name =
-    do (TermConstants consts) <- getExt
-       tm <- liftMaybe "getConstType: not a constant name" $
-               lookup name consts
-       return $! typeOf tm
+    do consts <- constants
+       liftMaybe "getConstType: not a constant name" .
+         liftM typeOf $ mapLookup name consts
 
 {-
   Primitive term constant construction function.  Used by newConstant,
   newBasicDefinition, and newBasicTypeDefinition.
 -}
-newConstant' :: String -> HOLTerm -> HOL Theory thry ()
+newConstant' :: Text -> HOLTerm -> HOL Theory thry ()
 newConstant' name c =
     do failWhen (can getConstType name) $
-         "newConstant: constant " ++ name ++ " has already been declared."
-       modifyExt $ \ (TermConstants consts) -> 
-                       TermConstants $ (name, c) : consts
+         "newConstant: constant " ++ show name ++ " has already been declared."
+       acid <- openLocalStateHOL (TermConstants initTermConstants)
+       updateHOL acid (InsertTermConstant name c)
+       createCheckpointAndCloseHOL acid
 
 {-|
   Constructs a new primitive term constant of a given name and type.  Also adds
   this new term to the current working theory.  Throws a 'HOLException' when a
   term of the same name has already been declared.
 -}
-newConstant :: String -> HOLType -> HOL Theory thry ()
+newConstant :: Text -> HOLType -> HOL Theory thry ()
 newConstant name ty =
-    newConstant' name $ newPrimConst name ty
+    do cond <- can getConstType name
+       if cond
+          then printDebugLn ("newConstant: ignoring redefintion of " ++ 
+                             show name) $ return ()
+          else newConstant' name $ newPrimitiveConst name ty
 
 {-|
   Constructs a specific instance of a term constant when provided with its name
@@ -222,11 +325,11 @@ newConstant name ty =
 
   * The provided name is not a currently defined constant.
 -}
-mkConst :: TypeSubst l r => String -> [(l, r)] -> HOL cls thry HOLTerm
+mkConst :: TypeSubst l r => Text -> [(l, r)] -> HOL cls thry HOLTerm
 mkConst name tyenv =
-    do (TermConstants consts) <- getExt
+    do consts <- constants
        tm <- liftMaybe "mkConst: not a constant name" $ 
-               lookup name consts
+               mapLookup name consts
        liftMaybe "mkConst: instantiation failed" $ 
          instConst tm tyenv
 
@@ -234,11 +337,11 @@ mkConst name tyenv =
   A version of 'mkConst' that accepts a triplet of type substitition 
   environments.  Frequently used with the 'typeMatch' function.
 -}
-mkConstFull :: String -> SubstTrip -> HOL cls thry HOLTerm
+mkConstFull :: Text -> SubstTrip -> HOL cls thry HOLTerm
 mkConstFull name pat =
-    do (TermConstants consts) <- getExt
+    do consts <- constants
        tm <- liftMaybe "mkConstFull: not a constant name" $
-               lookup name consts
+               mapLookup name consts
        liftMaybe "mkConstFull: instantiation failed" $ 
          instConstFull tm pat
                                     
@@ -251,10 +354,9 @@ mkEq :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkEq l r =
     let ty = typeOf l in
       do eq <- mkConst "=" [(tyA, ty)]
-         liftEither "mkEq" $
-           liftM1 mkComb (mkComb eq l) r
+         liftM1 mkComb (mkComb eq l) r <#?> "mkEq"
 
--- State for Axioms	
+-- State for Axioms     
 
 {-|
   Retrieves the list of axioms from the current working theory.  The list
@@ -262,20 +364,12 @@ mkEq l r =
   compile time operations have a tag with which they can use to extract axioms 
   from saved theories.  See 'extractAxiom' for more details.
 -}
-axioms :: HOL cls thry [(String, HOLThm)]
-axioms =	
-    do (TheAxioms thms) <- getExt
-       return thms
-
-{-| 
-  Retrieves a specific axiom by name.  Throws a 'HOLException' if there is no
-  axiom with the provided name in the current working theory.
--}
-getAxiom :: String -> HOL cls thry HOLThm
-getAxiom lbl =
-    do (TheAxioms thms) <- getExt
-       liftMaybe "getAxiom: axiom name not found" $
-         lookup lbl thms
+axioms :: HOL cls thry (Map Text HOLThm)
+axioms =        
+    do acid <- openLocalStateHOL (TheAxioms mapEmpty)
+       m <- queryHOL acid GetAxioms
+       closeAcidStateHOL acid
+       return m
 
 {-| 
   Constructs a new axiom of a given name and conclusion term.  Also adds this
@@ -286,15 +380,31 @@ getAxiom lbl =
 
   * An axiom with the provided name has already been declared.
 -}
-newAxiom :: String -> HOLTerm -> HOL Theory thry HOLThm
-newAxiom name tm
-    | typeOf tm /= tyBool = fail "newAxiom: Not a proposition."
-    | otherwise =
-        do failWhen (can getAxiom name) $ "newAxiom: axiom with name " ++ 
-             name ++ " has already been declared."
-           let th = axiomThm tm 
-           modifyExt $ \ (TheAxioms axs) -> TheAxioms $ (name, th) : axs
-           return th
+newAxiom :: Text -> HOLTerm -> HOL Theory thry HOLThm
+newAxiom name tm =
+    do acid <- openLocalStateHOL (TheAxioms mapEmpty)
+       qth <- queryHOL acid (GetAxiom' name)
+       closeAcidStateHOL acid
+       case qth of
+         Just th -> 
+             return th
+         Nothing
+             | typeOf tm /= tyBool -> 
+                   fail "newAxiom: Not a proposition."
+             | otherwise ->
+                   let th = axiomThm tm in
+                     do acid' <- openLocalStateHOL (TheAxioms mapEmpty)
+                        updateHOL acid' (InsertAxiom name th)
+                        createCheckpointAndCloseHOL acid'
+                        return th
+                   
+ -- | Retrieves an axiom by label from the theory context.
+getAxiom :: Text -> HOL cls thry HOLThm
+getAxiom lbl =
+    do acid <- openLocalStateHOL (TheAxioms mapEmpty)
+       qth <- queryHOL acid (GetAxiom' lbl)
+       closeAcidStateHOL acid
+       liftMaybe ("getAxiom: axiom " ++ show lbl ++ " not found.") qth
 
 -- State for Definitions
 {-|
@@ -303,22 +413,44 @@ newAxiom name tm
 -}
 definitions :: HOL cls thry [HOLThm]
 definitions =
-    do (TheCoreDefinitions defs) <- getExt
-       return defs
+    do acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
+       m <- queryHOL acid GetCoreDefinitions
+       closeAcidStateHOL acid
+       return m
 
 {-|
   Introduces a definition of the form @c = t@ into the current working theory.
   Throws a 'HOLException' when the definitional term is ill-formed.  See
   'newDefinedConst' for more details.
 -}
-newBasicDefinition :: HOLTerm -> HOL Theory thry HOLThm
-newBasicDefinition tm =
-    do (c@(view -> Const name _ _), dth) <- liftEither "newBasicDefinition" $
-                                              newDefinedConst tm
-       newConstant' name c
-       modifyExt $ \ (TheCoreDefinitions defs) -> 
-                       TheCoreDefinitions $ dth : defs
-       return dth
+newBasicDefinition :: Text -> HOLTerm -> HOL Theory thry HOLThm
+newBasicDefinition lbl tm =
+    getBasicDefinition lbl
+    <|> case destEq tm of
+          Just (Const _ _, _) ->
+            fail "newBasicDefinition: constant already defined."
+          Just (Var name _, _)
+            | name /= lbl ->
+                  fail $ "newBasicDefinition: provided label does not " ++
+                         "match provided term."
+            | otherwise ->
+                  do (c@(Const x _), dth) <- liftEither "newBasicDefinition" $ 
+                                               newDefinedConst tm
+                     newConstant' x c
+                     acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
+                     updateHOL acid (InsertCoreDefinition lbl dth)
+                     createCheckpointAndCloseHOL acid
+                     return dth
+          _ -> fail "newBasicDefinition: provided term not an equation."
+                    
+-- | Retrieves a basic term definition by label from the theory context.
+getBasicDefinition :: Text -> HOL cls thry HOLThm
+getBasicDefinition lbl =
+    do acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
+       qth <- queryHOL acid (GetCoreDefinition lbl)
+       closeAcidStateHOL acid
+       liftMaybe ("getBasicDefinition: definition for " ++ show lbl ++
+                  " not found.") qth
 
 {-|
   Introduces a new type constant, and two associated term constants, into the 
@@ -342,19 +474,31 @@ newBasicDefinition tm =
 
   See 'newDefinedTypeOp' for more details.
 -}
-newBasicTypeDefinition :: String -> String -> String -> HOLThm -> 
+newBasicTypeDefinition :: Text -> Text -> Text -> HOLThm -> 
                           HOL Theory thry (HOLThm, HOLThm)
 newBasicTypeDefinition tyname absname repname dth =
   do failWhen (return or <*> mapM (can getConstType) [absname, repname]) $
-       "newBasicTypeDefinition: Constant(s) " ++ absname ++ ", " ++ repname ++
-         " already in use."
+       "newBasicTypeDefinition: Constant(s) " ++ show absname ++ ", " ++ 
+       show repname ++ " already in use."
      (atyop, a, r, dth1, dth2) <- liftEither "newBasicTypeDefinition" $
                                     newDefinedTypeOp tyname absname repname dth
      failWhen (canNot (newType' tyname) atyop) $
-       "newBasicTypeDefinition: Type " ++ tyname ++ " already defined."
+       "newBasicTypeDefinition: Type " ++ show tyname ++ " already defined."
      newConstant' absname a
      newConstant' repname r
+     acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
+     updateHOL acid (InsertTypeDefinition tyname (dth1, dth2))
+     createCheckpointAndCloseHOL acid
      return (dth1, dth2)
+
+-- | Retrieves a basic type definition by label from the theory context.
+getBasicTypeDefinition :: Text -> HOL cls thry (HOLThm, HOLThm)
+getBasicTypeDefinition lbl =
+    do acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
+       qth <- queryHOL acid (GetTypeDefinition lbl)
+       closeAcidStateHOL acid
+       liftMaybe ("getBasicTypeDefinition: definition for " ++ show lbl ++
+                  " not found.") qth
 
 
 -- Primitive Debugging Functions
@@ -385,6 +529,3 @@ printDebugBase fn str x =
        if debug
           then fn str >> x
           else x
-
-deriveLiftMany [ ''TypeConstants, ''TermConstants
-               , ''TheAxioms, ''TheCoreDefinitions ]

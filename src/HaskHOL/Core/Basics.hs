@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
 
 {-|
   Module:    HaskHOL.Core.Basics
@@ -14,109 +14,133 @@
   that do not have this dependence.
 -}
 module HaskHOL.Core.Basics
-    ( -- * Variable Term Generation
-      genVarWithName -- :: String -> HOLType -> HOL cls thry HOLTerm
-    , genVar         -- :: HOLType -> HOL cls thry HOLTerm
+    ( -- * Variable Term and Type Generation
+      genVarWithName
+    , genVar
+    , unsafeGenVarWithName
+    , unsafeGenVar
+    , genSmallTyVar
       -- * Common Type Functions
-    , occursIn   -- :: HOLType -> HOLType -> Bool
-    , tysubst    -- :: HOLTypeEnv -> HOLType -> Either String HOLType
-    , alphaUtype -- :: HOLType -> HOLType -> Either String HOLType
+    , occursIn
+    , tysubst
+    , alphaUtype
       -- * Common Term Functions
-    , freeIn     -- :: HOLTerm -> HOLTerm -> Bool
-    , subst      -- :: HOLTermEnv -> HOLTerm -> HOL cls thry HOLTerm
-    , alpha      -- :: HOLTerm -> HOLTerm -> Either String HOLTerm
-    , alphaTyabs -- :: HOLType -> HOLTerm -> Either String HOLTerm
-    , findTerm   -- :: (HOLTerm -> Bool) -> HOLTerm -> Maybe HOLTerm
-    , findTerms  -- :: (HOLTerm -> Bool) -> HOLTerm -> [HOLTerm]
-    , findPath   -- :: (HOLTerm -> Bool) -> HOLTerm -> Maybe String
-    , followPath -- :: String -> HOLTerm -> Maybe HOLTerm
+    , freeIn
+    , variables
+    , subst   
+    , alpha     
+    , alphaTyabs
+    , findTerm   
+    , findTermM
+    , findTerms
+    , findTermsM
+    , findPath   
+    , followPath
       -- * Common Theorem Functions
-    , typeVarsInThm -- :: HOLThm -> [HOLType]
-    , thmFrees      -- :: HOLThm -> [HOLTerm]
+    , typeVarsInThm
+    , thmFrees     
       -- * Derived Destructors and Constructors for Basic Terms
-    , listMkComb  -- :: HOLTerm -> [HOLTerm] -> Either String HOLTerm
-    , listMkAbs   -- :: [HOLTerm] -> HOLTerm -> Either String HOLTerm
-    , mkArgs      -- :: String -> [HOLTerm] -> [HOLType] -> [HOLTerm]
-    , rator       -- :: HOLTerm -> Maybe HOLTerm
-    , rand        -- :: HOLTerm -> Maybe HOLTerm
-    , bndvar      -- :: HOLTerm -> Maybe HOLTerm
-    , body        -- :: HOLTerm -> Maybe HOLTerm
-    , bndvarTyabs -- :: HOLTerm -> Maybe HOLType
-    , bodyTyabs   -- :: HOLTerm -> Maybe HOLTerm
-    , stripComb   -- :: HOLTerm -> (HOLTerm, [HOLTerm])
-    , stripAbs    -- :: HOLTerm -> ([HOLTerm], HOLTerm)
+    , listMkComb  
+    , listMkAbs   
+    , mkArgs     
+    , rator       
+    , rand      
+    , bndvar     
+    , body       
+    , bndvarTyabs
+    , bodyTyabs  
+    , stripComb
+    , stripTyComb 
+    , stripAbs
       -- * Type Matching Functions
-    , typeMatch   -- :: HOLType -> HOLType -> SubstTrip -> Maybe SubstTrip
-    , mkMConst    -- :: String -> HOLType -> HOL cls thry HOLTerm
-    , mkIComb     -- :: HOLTerm -> HOLTerm -> Maybe HOLTerm
-    , listMkIComb -- :: String -> [HOLTerm] -> HOL cls thry HOLTerm
+    , typeMatch
+    , mkMConst
+    , mkIComb
+    , listMkIComb
       -- * Predicates, Constructors, and Destructors for Binary Terms
-    , isBinary    -- :: String -> HOLTerm -> Bool
-    , isBinop     -- :: HOLTerm -> HOLTerm -> Bool
-    , destBinary  -- :: String -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destBinop   -- :: HOLTerm -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , mkBinary    -- :: String -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkBinop     -- :: HOLTerm -> HOLTerm -> HOLTerm -> Either String HOLTerm
-    , listMkBinop -- :: HOLTerm -> [HOLTerm] -> Either String HOLTerm
-    , binops      -- :: HOLTerm -> HOLTerm -> [HOLTerm]
+    , isBinary 
+    , isBinop
+    , destBinary
+    , pattern Binary
+    , destBinop
+    , mkBinary
+    , mkBinop
+    , listMkBinop
+    , binops
       -- * Predicates, Constructors, and Destructors for Complex Abstractions
-    , isGAbs       -- :: HOLTerm -> Bool
-    , isBinder     -- :: String -> HOLTerm -> Bool
-    , isTyBinder   -- :: String -> HOLTerm -> Bool
-    , destGAbs     -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destBinder   -- :: String -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destTyBinder -- :: String -> HOLTerm -> Maybe (HOLType, HOLTerm)
-    , mkGAbs       -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkBinder     -- :: String -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkTyBinder   -- :: String -> HOLType -> HOLTerm -> HOL cls thry HOLTerm
-    , listMkGAbs   -- :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-    , stripGAbs    -- :: HOLTerm -> ([HOLTerm], HOLTerm)
+    , isGAbs
+    , isBinder 
+    , isTyBinder
+    , destGAbs
+    , destBinder
+    , pattern Bind
+    , destTyBinder
+    , pattern TyBind
+    , mkGAbs
+    , mkBinder
+    , mkTyBinder
+    , listMkGAbs
+    , stripGAbs
       -- * Predicates, Constructors, and Destructors for Propositions
-    , isConj       -- :: HOLTerm -> Bool
-    , isImp        -- :: HOLTerm -> Bool
-    , isForall     -- :: HOLTerm -> Bool
-    , isExists     -- :: HOLTerm -> Bool
-    , isDisj       -- :: HOLTerm -> Bool
-    , isNeg        -- :: HOLTerm -> Bool
-    , isUExists    -- :: HOLTerm -> Bool
-    , isTyAll      -- :: HOLTerm -> Bool
-    , isTyEx       -- :: HOLTerm -> Bool
-    , destConj     -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destImp      -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destForall   -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destExists   -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destDisj     -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destNeg      -- :: HOLTerm -> Maybe HOLTerm
-    , destUExists  -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destTyAll    -- :: HOLTerm -> Maybe (HOLType, HOLTerm)
-    , destTyEx     -- :: HOLTerm -> Maybe (HOLType, HOLTerm)
-    , mkConj       -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkImp        -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkForall     -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkExists     -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkDisj       -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkNeg        -- :: HOLTerm -> HOL cls thry HOLTerm
-    , mkUExists    -- :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-    , mkTyAll      -- :: HOLType -> HOLTerm -> HOL cls thry HOLTerm
-    , mkTyEx       -- :: HOLType -> HOLTerm -> HOL cls thry HOLTerm
-    , listMkConj   -- :: [HOLTerm] -> HOL cls thry HOLTerm
-    , listMkDisj   -- :: [HOLTerm] -> HOL cls thry HOLTerm
-    , listMkForall -- :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-    , listMkExists -- :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-    , conjuncts    -- :: HOLTerm -> [HOLTerm]
-    , disjuncts    -- :: HOLTerm -> [HOLTerm]
-    , stripForall  -- :: HOLTerm -> ([HOLTerm], HOLTerm)
-    , stripExists  -- :: HOLTerm -> ([HOLTerm], HOLTerm)
-    , stripTyAll   -- :: HOLTerm -> ([HOLType], HOLTerm)
-    , stripTyEx    -- :: HOLTerm -> ([HOLType], HOLTerm)
+    , isIff
+    , isConj
+    , isImp
+    , isForall
+    , isExists
+    , isDisj
+    , isNeg
+    , isUExists
+    , isTyAll
+    , isTyEx
+    , destIff
+    , pattern (:<=>)
+    , destConj
+    , pattern (:/\)
+    , destImp
+    , pattern (:==>)
+    , destForall
+    , pattern Forall
+    , destExists
+    , pattern Exists
+    , destDisj
+    , pattern (:\/)
+    , destNeg
+    , pattern Neg
+    , destUExists
+    , pattern UExists
+    , destTyAll
+    , pattern TyAll
+    , destTyEx
+    , pattern TyEx
+    , mkIff
+    , mkConj
+    , mkImp
+    , mkForall
+    , mkExists
+    , mkDisj
+    , mkNeg
+    , mkUExists
+    , mkTyAll
+    , mkTyEx
+    , listMkConj
+    , listMkDisj
+    , listMkForall
+    , listMkExists
+    , conjuncts
+    , disjuncts
+    , stripForall
+    , stripExists
+    , stripTyAll
+    , stripTyEx
       -- * Predicates, Constructors, and Destructors for Other Terms
-    , isCons      -- :: HOLTerm -> Bool
-    , isList      -- :: HOLTerm -> Bool
-    , isLet       -- :: HOLTerm -> Bool
-    , destCons    -- :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-    , destList    -- :: HOLTerm -> Maybe [HOLTerm]
-    , destLet     -- :: HOLTerm -> Maybe ([(HOLTerm, HOLTerm)], HOLTerm)
-    , destNumeral -- :: HOLTerm -> Maybe Integer
+    , isCons
+    , isList
+    , isLet
+    , destCons
+    , destList
+    , destLet
+    , mkLet
+    , destNumeral
       -- * Term Nets
     , module HaskHOL.Core.Basics.Nets
     ) where
@@ -126,19 +150,51 @@ import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics.Nets
 
--- Term Generation
+import Data.IORef
+import System.IO.Unsafe (unsafePerformIO)
+
+-- Term and Type Generation
 {-|  
   Generates a new term variable consisting of a given prefix and the next value
   in the fresh term counter.
 -}
-genVarWithName :: String -> HOLType -> HOL cls thry HOLTerm
+genVarWithName :: Text -> HOLType -> HOL cls thry HOLTerm
 genVarWithName n ty =
     do count <- tickTermCounter
-       return $! mkVar (n ++ show count) ty
+       return $! mkVar (n `append` pack (show count)) ty
 
 -- | A version of 'genVarWithName' that defaults to the prefix \"_\".
 genVar :: HOLType -> HOL cls thry HOLTerm
 genVar = genVarWithName "_"
+
+{-# NOINLINE counter #-}
+counter :: IORef Int
+counter = unsafePerformIO $ newIORef 0
+
+{-|
+  An unsafe version of 'genVarWithName' that attempts to create a fresh variable
+  using a global counter, atomically updated via 'unsafePerformIO'.  Useful if
+  fresh name generation is the only side effect of a function.
+-}
+{-# NOINLINE unsafeGenVarWithName #-}
+unsafeGenVarWithName :: Text -> HOLType -> HOLTerm
+unsafeGenVarWithName n ty = 
+    unsafePerformIO $ atomicModifyIORef counter 
+      (\ x -> (succ x, mkVar (n `append` pack (show x)) ty))
+
+-- | A version of 'genVarWithNamePure' that defaults to the prefix \"__\".
+{-# NOINLINE unsafeGenVar #-}
+unsafeGenVar :: HOLType -> HOLTerm
+unsafeGenVar = unsafeGenVarWithName "__"
+
+{-|
+  Generates a new small, type variable with a name built using the fresh type
+  counter.
+-}
+genSmallTyVar :: HOL cls thry HOLType
+genSmallTyVar =
+    do count <- tickTypeCounter
+       liftEither "genSmallTyVar" . mkSmall $ mkVarType (pack $ '_':show count)
 
 -- functions for manipulating types
 {-| 
@@ -148,7 +204,7 @@ genVar = genVarWithName "_"
 occursIn :: HOLType -> HOLType -> Bool
 occursIn ty bigTy
   | ty == bigTy = True
-  | otherwise = case view bigTy of
+  | otherwise = case bigTy of
                   TyApp _ args -> any (occursIn ty) args
                   _ -> False
 
@@ -166,14 +222,15 @@ occursIn ty bigTy
 tysubst :: HOLTypeEnv -> HOLType -> Either String HOLType
 tysubst env ty =
   note "tysubst" (lookup ty env) 
-  <|> case view ty of
-        TyVar {} -> return ty
+  <|> case ty of
+        TyVar{} -> return ty
         TyApp tycon tyvars -> 
           (tyApp tycon =<< mapM (tysubst env) tyvars) <?>
             "tysubst: bad type application"
         UType bv bod -> 
           (mkUType bv =<< tysubst (filter (\ (x, _) -> x /= bv) env) bod) <?>
             "tysubst: bad universal type"
+        _ -> error "tysubst: exhaustive warning."
 
 {-|
   Alpha conversion for universal types.  Renames a bound type variable to match
@@ -187,12 +244,12 @@ tysubst env ty =
   * The type variable is free in the body of the universal type.
 -}
 alphaUtype :: HOLType -> HOLType -> Either String HOLType
-alphaUtype tv@(view -> TyVar True _) ty@(view -> UType tv0 bod)
+alphaUtype tv@(TyVar True _) ty@(UType tv0 bod)
     | tv == tv0 = Right ty
     | tv `elem` tyVars bod = Left "alphaUtype: variable free in body of type."
     | otherwise = mkUType tv (typeSubst [(tv0, tv)] bod) <?>
                     "alphaUtype: construction of universal type failed."
-alphaUtype _ (view -> UType{}) = 
+alphaUtype _ UType{} = 
   Left "alphaUtype: first type not a small type variable."
 alphaUtype _ _ = Left "alphaUtype: second type not a universal type."
 
@@ -204,12 +261,22 @@ alphaUtype _ _ = Left "alphaUtype: second type not a universal type."
 freeIn :: HOLTerm -> HOLTerm -> Bool
 freeIn tm1 tm2 =
   (tm1 `aConv` tm2) ||
-  (case view tm2 of
+  (case tm2 of
      Comb l r -> freeIn tm1 l || freeIn tm1 r
      Abs bv bod -> not (varFreeIn bv tm1) && freeIn tm1 bod
      TyAbs bv bod -> bv `elem` typeVarsInTerm tm1 && freeIn tm1 bod
      TyComb tm _ -> freeIn tm1 tm
      _ -> False)
+
+-- | Returns all variables in a term, free and bound both.
+variables :: HOLTerm -> [HOLTerm]
+variables = vars []
+  where vars :: [HOLTerm] -> HOLTerm -> [HOLTerm]
+        vars acc tm@Var{} = insert tm acc
+        vars acc Const{} = acc
+        vars acc (Abs v bod) = vars (insert v acc) bod
+        vars acc (Comb l r) = vars (vars acc l) r
+        vars _ _ = error "variables: exhaustive warning."
 
 {-| 
   Basic term substitution.  Throws a 'HOLException' when the substitution would 
@@ -219,21 +286,21 @@ freeIn tm1 tm2 =
   environments in the systems, such that for the pair @(A, B)@ @B@ will be 
   substituted for all instances of @A@.  
 -}
-subst :: HOLTermEnv -> HOLTerm -> HOL cls thry HOLTerm
+subst :: HOLTermEnv -> HOLTerm -> Maybe HOLTerm
 subst ilist tm =
-    let (xs, ts) = unzip ilist in
-      do gs <- mapM (genVar . typeOf) xs
-         tm' <- liftEither "subst" $ ssubst (zip xs gs) tm
+    let (xs, ts) = unzip ilist
+        gs = map (unsafeGenVar . typeOf) xs in
+      do tm' <- hush $ ssubst (zip xs gs) tm
          if tm' == tm
             then return tm
-            else return $! varSubst (zip gs ts) tm'
+            else varSubst (zip gs ts) tm'
   where ssubst :: HOLTermEnv -> HOLTerm -> Either String HOLTerm
         ssubst [] t = Right t
         ssubst env t = 
           case find (\ (t', _) -> t `aConv` t') env of
             Just (_, res) -> Right res
             Nothing ->
-              case view t of
+              case t of
                 Comb f x -> 
                   liftM1 mkComb (ssubst env f) =<< ssubst env x
                 Abs bv bod -> 
@@ -260,13 +327,13 @@ subst ilist tm =
   * The variable is free in the body of the abstraction.
 -}
 alpha :: HOLTerm -> HOLTerm -> Either String HOLTerm
-alpha v@(view -> Var _ ty) tm@(view -> Abs v0@(view -> Var _ ty0) bod)
+alpha v@(Var _ ty) tm@(Abs v0@(Var _ ty0) bod)
     | v == v0 = Right tm
     | ty /= ty0 = Left "alpha: types of variables not equal."
     | v `varFreeIn` bod = Left "alpha: variable free in body of abstraction."
-    | otherwise = mkAbs v (varSubst [(v0, v)] bod) <?> 
+    | otherwise = (mkAbs v #<< varSubst [(v0, v)] bod) <?> 
                     "alpha: construction of abstraction failed."
-alpha _ (view -> Abs{}) = Left "alpha: first term not a variable."
+alpha _ Abs{} = Left "alpha: first term not a variable."
 alpha _ _ = Left "alpha: second term not an abstraction."
 
 {-|
@@ -281,12 +348,12 @@ alpha _ _ = Left "alpha: second term not an abstraction."
   * The type is free in the body of the type abstraction.
 -}
 alphaTyabs :: HOLType -> HOLTerm -> Either String HOLTerm
-alphaTyabs ty@(view -> TyVar True _) tm@(view -> TyAbs ty0 bod)
+alphaTyabs ty@(TyVar True _) tm@(TyAbs ty0 bod)
     | ty == ty0 = Right tm
     | ty `elem` typeVarsInTerm bod = 
         Left "alphaTyabs: type free in body of type abstraction."
     | otherwise = mkTyAbs ty $ inst [(ty0, ty)] bod
-alphaTyabs _ (view -> TyAbs{}) = 
+alphaTyabs _ TyAbs{} = 
     Left "alphaTyabs: type not a small type variable."
 alphaTyabs _ _ = 
     Left "alphaTyabs: term not a type abstraction."
@@ -300,25 +367,55 @@ findTerm :: (HOLTerm -> Bool) -> HOLTerm -> Maybe HOLTerm
 findTerm p tm
     | p tm = Just tm
     | otherwise =
-        case view tm of
+        case tm of
           Abs _ bod -> findTerm p bod
           Comb l r -> findTerm p l <|> findTerm p r
           TyAbs _ bod -> findTerm p bod
           TyComb tm' _ -> findTerm p tm'
           _ -> Nothing
 
+-- | The monadic version of 'findTerm'.
+findTermM :: (Alternative m, Monad m) => (HOLTerm -> m Bool) -> HOLTerm 
+          -> m HOLTerm
+findTermM p tm =
+    do c <- p tm 
+       if c
+          then return tm
+          else case tm of
+                 Abs _ bod -> findTermM p bod
+                 Comb l r -> findTermM p l <|> findTermM p r
+                 TyAbs _ bod -> findTermM p bod
+                 TyComb tm' _ -> findTermM p tm'
+                 _ -> fail "findTermM"
+
 -- | Searches a term for all unique subterms that satisfy a given predicate.
 findTerms :: (HOLTerm -> Bool) -> HOLTerm -> [HOLTerm]
-findTerms = findRec []
-  where findRec :: [HOLTerm] -> (HOLTerm -> Bool) -> HOLTerm -> [HOLTerm]
-        findRec tl p tm =
+findTerms p = findRec []
+  where findRec :: [HOLTerm] -> HOLTerm -> [HOLTerm]
+        findRec tl tm =
             let tl' = if p tm then insert tm tl else tl in
-              case view tm of
-                Abs _ bod -> findRec tl' p bod
-                Comb l r -> findRec (findRec tl' p l) p r
-                TyAbs _ bod -> findRec tl' p bod
-                TyComb tm' _ -> findRec tl' p tm'
+              case tm of
+                Abs _ bod -> findRec tl' bod
+                Comb l r -> findRec (findRec tl' l) r
+                TyAbs _ bod -> findRec tl' bod
+                TyComb tm' _ -> findRec tl' tm'
                 _ -> tl'
+
+-- | The monadic version of 'findTerms'.
+findTermsM :: forall m. (Alternative m, Monad m) => (HOLTerm -> m Bool) 
+           -> HOLTerm -> m [HOLTerm]
+findTermsM p = findRec []
+  where findRec :: (Alternative m, Monad m) => [HOLTerm] -> HOLTerm 
+                -> m [HOLTerm]
+        findRec tl tm =
+            do c <- (p tm <|> return False)
+               let tl' = if c then insert tm tl else tl
+               case tm of
+                 Abs _ bod -> findRec tl' bod
+                 Comb l r -> liftM1 findRec (findRec tl' l) r
+                 TyAbs _ bod -> findRec tl' bod
+                 TyComb tm' _ -> findRec tl' tm'
+                 _ -> return tl'
 
 -- Director strings down a term
 {-|
@@ -341,7 +438,7 @@ findPath :: (HOLTerm -> Bool) -> HOLTerm -> Maybe String
 findPath p tm
     | p tm = Just []
     | otherwise =
-        case view tm of
+        case tm of
           Abs _ bod -> liftM ((:) 'b') $ findPath p bod
           TyAbs _ bod -> liftM ((:) 't') $ findPath p bod
           Comb l r -> liftM ((:) 'r') (findPath p r) <|>
@@ -356,23 +453,25 @@ findPath p tm
 -}
 followPath :: String -> HOLTerm -> Maybe HOLTerm
 followPath [] tm = Just tm
-followPath ('l':t) (view -> Comb l _) = followPath t l
-followPath ('r':t) (view -> Comb _ r) = followPath t r
-followPath ('c':t) (view -> TyComb tm _) = followPath t tm
-followPath ('b':t) (view -> Abs _ bod) = followPath t bod
-followPath ('t':t) (view -> TyAbs _ bod) = followPath t bod
+followPath ('l':t) (Comb l _) = followPath t l
+followPath ('r':t) (Comb _ r) = followPath t r
+followPath ('c':t) (TyComb tm _) = followPath t tm
+followPath ('b':t) (Abs _ bod) = followPath t bod
+followPath ('t':t) (TyAbs _ bod) = followPath t bod
 followPath _ _ = Nothing
 
 -- theorem manipulators
 -- | Returns the list of all free type variables in a theorem.
 typeVarsInThm :: HOLThm -> [HOLType]
-typeVarsInThm (view -> Thm asl c) =
+typeVarsInThm (Thm asl c) =
     foldr (union . typeVarsInTerm) (typeVarsInTerm c) asl
+typeVarsInThm _ = error "typeVarsInThm: exhaustive warning."
 
 -- | Returns the list of all free term variables in a theorem.
 thmFrees :: HOLThm -> [HOLTerm]
-thmFrees (view -> Thm asl c) = 
+thmFrees (Thm asl c) = 
     foldr (union . frees) (frees c) asl
+thmFrees _ = error "typeVarsInThm: exhaustive warning."
 
 -- more syntax
 {-|
@@ -399,13 +498,13 @@ listMkAbs = flip (foldrM mkAbs)
 
   > mkArgs "x" avoids [ty1, ... tyn] === [x1:ty1, ..., xn:tyn] where {x1, ..., xn} are not elements of avoids
 -}
-mkArgs :: String -> [HOLTerm] -> [HOLType] -> [HOLTerm]
+mkArgs :: Text -> [HOLTerm] -> [HOLType] -> [HOLTerm]
 mkArgs s avoid (ty:[]) = [variant avoid $ mkVar s ty]
 mkArgs s avoid tys = mkRec 0 s avoid tys
-  where mkRec :: Int -> String -> [HOLTerm] -> [HOLType] -> [HOLTerm]
+  where mkRec :: Int -> Text -> [HOLTerm] -> [HOLType] -> [HOLTerm]
         mkRec _ _ _ [] = []
         mkRec n x avs (y:ys) =
-          let v' = variant avs $ mkVar (x ++ show n) y
+          let v' = variant avs $ mkVar (x `append` pack (show n)) y
               vs = mkRec (n + 1) x (v':avs) ys in
             (v':vs)
 
@@ -414,7 +513,7 @@ mkArgs s avoid tys = mkRec 0 s avoid tys
   term is not a combination.
 -}
 rator :: HOLTerm -> Maybe HOLTerm
-rator (view -> Comb l _) = Just l
+rator (Comb l _) = Just l
 rator _ = Nothing
 
 {-|
@@ -422,7 +521,7 @@ rator _ = Nothing
   term is not a combination.
 -}
 rand :: HOLTerm -> Maybe HOLTerm
-rand (view -> Comb _ r) = Just r
+rand (Comb _ r) = Just r
 rand _ = Nothing
 
 {-|
@@ -430,7 +529,7 @@ rand _ = Nothing
   provided term is not an abstraction.
 -}
 bndvar :: HOLTerm -> Maybe HOLTerm
-bndvar (view -> Abs bv _) = Just bv
+bndvar (Abs bv _) = Just bv
 bndvar _ = Nothing
 
 {-|
@@ -438,7 +537,7 @@ bndvar _ = Nothing
   provided term is not an abstraction.
 -}
 body :: HOLTerm -> Maybe HOLTerm
-body (view -> Abs _ bod) = Just bod
+body (Abs _ bod) = Just bod
 body _ = Nothing
 
 {-|
@@ -446,7 +545,7 @@ body _ = Nothing
   provided term is not a type abstraction.
 -}
 bndvarTyabs :: HOLTerm -> Maybe HOLType
-bndvarTyabs (view -> TyAbs bv _) = Just bv
+bndvarTyabs (TyAbs bv _) = Just bv
 bndvarTyabs _ = Nothing
 
 {-|
@@ -454,7 +553,7 @@ bndvarTyabs _ = Nothing
   provided term is not a type abstraction.
 -}
 bodyTyabs :: HOLTerm -> Maybe HOLTerm
-bodyTyabs (view -> TyAbs _ bod) = Just bod
+bodyTyabs (TyAbs _ bod) = Just bod
 bodyTyabs _ = Nothing
 
 {-|
@@ -463,6 +562,13 @@ bodyTyabs _ = Nothing
 -}
 stripComb :: HOLTerm -> (HOLTerm, [HOLTerm])
 stripComb = revSplitList destComb
+
+{-|
+  Destructs a complex type combination returning its function term and its 
+  list of argument types.
+-}
+stripTyComb :: HOLTerm -> (HOLTerm, [HOLType])
+stripTyComb = revSplitList destTyComb
 
 {-|
   Destructs a complex abstraction returning its list of bound variables and its
@@ -484,7 +590,7 @@ typeMatch vty cty sofar =
     return snd <*> typeMatchRec vty cty ([], sofar)
   where typeMatchRec :: HOLType -> HOLType -> ([HOLType], SubstTrip) ->
                         Maybe ([HOLType], SubstTrip)
-        typeMatchRec v@(view -> TyVar{}) c acc@(env, (sfar, opTys, opOps))
+        typeMatchRec v@TyVar{} c acc@(env, (sfar, opTys, opOps))
             | v `elem` env = Just acc
             | otherwise =
                 case lookup v sfar of
@@ -492,13 +598,13 @@ typeMatch vty cty sofar =
                     | c' == c -> Just acc
                     | otherwise -> Nothing
                   Nothing -> Just (env, ((v, c):sfar, opTys, opOps))
-        typeMatchRec (view -> UType tvv varg) 
-                     (view -> UType tvc carg) (env, sfar) =
+        typeMatchRec (UType tvv varg) 
+                     (UType tvc carg) (env, sfar) =
             let carg' = if tvv == tvc then carg 
                         else typeSubst [(tvc, tvv)] carg in
               typeMatchRec varg carg' (tvv:env, sfar)
-        typeMatchRec (view -> TyApp vop vargs) 
-                     (view -> TyApp cop cargs) acc@(env, (sfar, opTys, opOps))
+        typeMatchRec (TyApp vop vargs) 
+                     (TyApp cop cargs) acc@(env, (sfar, opTys, opOps))
             | vop == cop = foldr2M typeMatchRec acc vargs cargs
             | isTypeOpVar vop && isTypeOpVar cop =
                 do copTy <- hush . uTypeFromTypeOpVar cop $ length cargs
@@ -532,7 +638,7 @@ typeMatch vty cty sofar =
 
   * Type matching fails.
 -}
-mkMConst :: String -> HOLType -> HOL cls thry HOLTerm
+mkMConst :: Text -> HOLType -> HOL cls thry HOLTerm
 mkMConst name ty = 
   do uty <- getConstType name <?> "mkMConst: not a constant name"
      (mkConstFull name . fromJust $ typeMatch uty ty ([], [], [])) <?>
@@ -559,7 +665,7 @@ mkIComb tm1 tm2 =
 
   * Any internal call to mkIComb fails.
 -}
-listMkIComb :: String -> [HOLTerm] -> HOL cls thry HOLTerm
+listMkIComb :: Text -> [HOLTerm] -> HOL cls thry HOLTerm
 listMkIComb cname args =
     do cnst <- mkConst cname ([]::HOLTypeEnv) <?> 
                  "listMkIComb: not a constant name"
@@ -571,13 +677,13 @@ listMkIComb cname args =
   Predicate that tests if a term is a binary application whose operator has the
   given name.
 -}
-isBinary :: String -> HOLTerm -> Bool
-isBinary s (view -> Comb (view -> Comb (view -> Const s' _ _) _) _) = s == s'
+isBinary :: Text -> HOLTerm -> Bool
+isBinary s (Comb (Comb (Const s' _) _) _) = s == s'
 isBinary _ _ = False
 
 -- | A version of 'isBinary' that tests for operator terms, not strings.
 isBinop :: HOLTerm -> HOLTerm -> Bool
-isBinop op (view -> Comb (view -> Comb op' _) _) = op' == op
+isBinop op (Comb (Comb op' _) _) = op' == op
 isBinop _ _ = False
 
 {-|
@@ -585,15 +691,18 @@ isBinop _ _ = False
   with 'Nothing' if the provided term is not a binary application with the 
   specified operator name.
 -}
-destBinary :: String -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destBinary s (view -> Comb (view -> Comb (view -> Const s' _ _) l) r)
+destBinary :: Text -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
+destBinary s (Comb (Comb (Const s' _) l) r)
     | s == s' = Just (l, r)
     | otherwise = Nothing
 destBinary _ _ = Nothing
 
+-- | The pattern synonym equivalent of 'destBinary'.
+pattern Binary s l r <- Comb (Comb (Const s _) l) r
+
 -- | A version of 'destBinary' that tests for operator terms, not strings.
 destBinop :: HOLTerm -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destBinop op (view -> Comb (view -> Comb op' l) r)
+destBinop op (Comb (Comb op' l) r)
     | op' == op = Just (l, r)
     | otherwise = Nothing
 destBinop _ _ = Nothing
@@ -604,11 +713,12 @@ destBinop _ _ = Nothing
   or the provided arguments must match the constant's general type.  Throws a
   'HOLException' if any of the internal calls to 'mkConst' or 'mkComb' fail.
 -}
-mkBinary :: String -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
+mkBinary :: Text -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkBinary s l r = 
   (do c <- mkConst s ([]::HOLTypeEnv)
-      fromRightM $ mkComb (fromRight $ mkComb c l) r)
-  <?> "mkBinary: " ++ s
+      let c' = inst [(tyA, typeOf l), (tyB, typeOf r)] c
+      fromRightM $ mkComb (fromRight $ mkComb c' l) r)
+  <?> "mkBinary: " ++ show s
 
 {-| 
   A version of 'mkBinary' that accepts the operator as a pre-constructed term.
@@ -638,16 +748,16 @@ isGAbs :: HOLTerm -> Bool
 isGAbs = isJust . destGAbs
 
 -- | Predicate that tests if a term is an abstraction of specified binder name.
-isBinder :: String -> HOLTerm -> Bool
-isBinder s (view -> Comb (view -> Const s' _ _) (view -> Abs{})) = s == s'
+isBinder :: Text -> HOLTerm -> Bool
+isBinder s (Comb (Const s' _) Abs{}) = s == s'
 isBinder _ _ = False
 
 {-| 
   Predicate that tests if a term is an abtraction of a specified type binder
   name.
 -}
-isTyBinder :: String -> HOLTerm -> Bool
-isTyBinder s (view -> Comb (view -> Const s' _ _) (view -> TyAbs{})) = s == s'
+isTyBinder :: Text -> HOLTerm -> Bool
+isTyBinder s (Comb (Const s' _) TyAbs{}) = s == s'
 isTyBinder _ _ = False
 
 {-| 
@@ -656,9 +766,11 @@ isTyBinder _ _ = False
   details.
 -}
 destGAbs :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destGAbs tm@(view -> Abs{}) = destAbs tm
-destGAbs (view -> Comb (view -> Const "GABS" _ _) (view -> Abs _ bod)) =
-    firstM rand =<< (destGeq . snd $ stripForall bod)
+destGAbs tm@Abs{} = destAbs tm
+destGAbs (Comb (Const "GABS" _) (Abs _ bod)) =
+    do (ltm, rtm) <- destGeq . snd $ stripForall bod
+       ltm' <- rand ltm
+       return (ltm', rtm)
   where destGeq :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
         destGeq = destBinary "GEQ"
 destGAbs _ = Nothing
@@ -668,22 +780,28 @@ destGAbs _ = Nothing
   its body term.  Fails with 'Nothing' if the provided term is not an
   abstraction with the specified binder name.
 -}
-destBinder :: String -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destBinder s (view -> Comb (view -> Const s' _ _) (view -> Abs bv t))
+destBinder :: Text -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
+destBinder s (Comb (Const s' _) (Abs bv t))
     | s == s' = Just (bv, t)
     | otherwise = Nothing
 destBinder _ _ = Nothing
+
+-- | The pattern synonym equivalent of 'destBinder'.
+pattern Bind s bv tm <- Comb (Const s _) (Abs bv tm)
 
 {-|
   Destructs a type abstraction of specified binder name into its bound type
   variable and its body term.  Fails with 'Nothing' if the provided term is not
   a type abstraction with the specified type binder name.
 -}
-destTyBinder :: String -> HOLTerm -> Maybe (HOLType, HOLTerm)
-destTyBinder s (view -> Comb (view -> Const s' _ _) (view -> TyAbs bv t))
+destTyBinder :: Text -> HOLTerm -> Maybe (HOLType, HOLTerm)
+destTyBinder s (Comb (Const s' _) (TyAbs bv t))
     | s == s' = Just (bv, t)
     | otherwise = Nothing
 destTyBinder _ _ = Nothing
+
+-- | The pattern synonym equivalent of 'destTyBinder'.
+pattern TyBind s ty tm <- Comb (Const s _) (TyAbs ty tm)
 
 {-|
   Constructor for generalized abstractions.  Generalized abstractions extend
@@ -701,8 +819,8 @@ destTyBinder _ _ = Nothing
   just calls 'mkAbs'.
 -}
 mkGAbs :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkGAbs tm1@(view -> Var{}) tm2 =
-    liftEither "mkGAbs: simple abstraction failed" $ mkAbs tm1 tm2
+mkGAbs tm1@Var{} tm2 =
+    mkAbs tm1 tm2 <#?> "mkGAbs: simple abstraction failed"
 mkGAbs tm1 tm2 = 
     let fvs = frees tm1 in
       (do fTy <- mkFunTy (typeOf tm1) $ typeOf tm2
@@ -725,11 +843,11 @@ mkGAbs tm1 tm2 =
   @(A -> *) -> *@, such that a well-typed term of the form @c (\\x . t)@ can be
   produced.
 -}
-mkBinder :: String -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
+mkBinder :: Text -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkBinder op v tm = 
     (do c <- mkConst op [(tyA, typeOf v)]
         fromRightM $ mkComb c =<< mkAbs v tm)
-    <?> "mkBinder: " ++ op
+    <?> "mkBinder: " ++ show op
 
 {-|
   Constructs a type abstraction given a type binder name, a type variable to
@@ -740,11 +858,11 @@ mkBinder op v tm =
   @(% 'a . *) -> *@, such that a well-typed term of the form @c (\\\\x . t)@ can
   be produced.
 -}
-mkTyBinder :: String -> HOLType -> HOLTerm -> HOL cls thry HOLTerm
+mkTyBinder :: Text -> HOLType -> HOLTerm -> HOL cls thry HOLTerm
 mkTyBinder op v tm =
   (do c <- mkConst op ([]::HOLTypeEnv)
       fromRightM $ mkComb c =<< mkTyAbs v tm)
-  <?> "mkTyBinder: " ++ op
+  <?> "mkTyBinder: " ++ show op
 
 -- | A specific version of 'listMkAbs' for general abstractions.
 listMkGAbs :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
@@ -755,6 +873,11 @@ stripGAbs :: HOLTerm -> ([HOLTerm], HOLTerm)
 stripGAbs = splitList destGAbs
 
 -- common special cases of binary ops
+-- | Predicate for biconditionals.
+isIff :: HOLTerm -> Bool
+isIff (Comb (Comb (Const "=" (TyBool :-> _)) _) _) = True
+isIff _ = False
+
 -- | Predicate for boolean conjunctions.
 isConj :: HOLTerm -> Bool
 isConj = isBinary "/\\"
@@ -777,7 +900,7 @@ isDisj = isBinary "\\/"
 
 -- | Predicate for boolean negations.
 isNeg :: HOLTerm -> Bool
-isNeg (view -> Comb (view -> Const "~" _ _) _) = True
+isNeg (Comb (Const "~" _) _) = True
 isNeg _ = False
 
 -- | Predicate for unique, existential quantification.
@@ -792,42 +915,87 @@ isTyAll = isTyBinder "!!"
 isTyEx :: HOLTerm -> Bool
 isTyEx = isTyBinder "??"
 
+-- | Destructor for biconditionals.
+destIff :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
+destIff (Comb (Comb (Const "=" (TyBool :-> _)) l) r) = Just (l, r)
+destIff _ = Nothing
+
+-- | The pattern synonym equivalent of 'destIff'.
+pattern l :<=> r <- Comb (Comb (Const "=" (TyBool :-> TyBool :-> TyBool)) l) r
+
 -- | Destructor for boolean conjunctions.
 destConj :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destConj = destBinary "/\\"
+
+-- | The pattern synonym equivalent of 'destConj'.
+pattern l :/\ r <- Binary "/\\" l r
 
 -- | Destructor for boolean implications.
 destImp :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destImp = destBinary "==>"
 
+-- | The pattern synonym equivalent of 'destImp'.
+pattern l :==> r <- Binary "==>" l r
+
 -- | Destructor for universal term quantification.
 destForall :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destForall = destBinder "!"
+
+-- | The pattern synonym equivalent of 'destForall'.
+pattern Forall bv tm <- Bind "!" bv tm
 
 -- | Destructor for existential term quantification.
 destExists :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destExists = destBinder "?"
 
+-- | The pattern synonym equivalent of 'destExists'.
+pattern Exists bv tm <- Bind "?" bv tm
+
 -- | Destructor for boolean disjunctions.
 destDisj :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destDisj = destBinary "\\/"
 
+-- | The pattern synonym equivalent of 'destDisj'.
+pattern l :\/ r <- Binary "\\/" l r
+
 -- | Destructor for boolean negations.
 destNeg :: HOLTerm -> Maybe HOLTerm
-destNeg (view -> Comb (view -> Const "~" _ _) p) = Just p
+destNeg (Comb (Const "~" _) p) = Just p
 destNeg _ = Nothing
+
+-- | The pattern synonym equivalent of 'destNeg'.
+pattern Neg tm <- (Comb (Const "~" _) tm)
 
 -- | Destructor for unique, existential quantification.
 destUExists :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
 destUExists = destBinder "?!"
 
+-- | The pattern synonym equivalent of 'destUExists'.
+pattern UExists bv tm <- Bind "?!" bv tm
+
 -- | Destructor for term-level universal type quantification.
 destTyAll :: HOLTerm -> Maybe (HOLType, HOLTerm)
 destTyAll = destTyBinder "!!"
 
+-- | The pattern synonym equivalent of 'destTyAll'.
+pattern TyAll ty tm <- TyBind "!!" ty tm
+
 -- | Destructor for term-level existential type quantification.
 destTyEx :: HOLTerm -> Maybe (HOLType, HOLTerm)
 destTyEx = destTyBinder "??"
+
+-- | The pattern synonym equivalent of 'destTyEx'.
+pattern TyEx ty tm <- TyBind "??" ty tm
+
+{-|
+  Constructor for boolean conjunctions.  Throws a 'HOLException' if the internal
+  calls to 'mkComb' fail.
+-}
+mkIff :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
+mkIff l r =
+    (do bicond <- mkConst "=" [(tyA, tyBool)]
+        fromRightM $ flip mkComb r =<< mkComb bicond l)
+    <?> "mkIff"
 
 {-|
   Constructor for boolean conjunctions.  Throws a 'HOLException' if the internal
@@ -966,8 +1134,8 @@ destCons = destBinary "CONS"
 destList :: HOLTerm -> Maybe [HOLTerm]
 destList tm =
     let (tms, nil) = splitList destCons tm in
-      case view nil of
-        (Const "NIL" _ _) -> Just tms
+      case nil of
+        (Const "NIL" _) -> Just tms
         _ -> Nothing
 
 {-|
@@ -979,13 +1147,27 @@ destList tm =
 destLet :: HOLTerm -> Maybe ([(HOLTerm, HOLTerm)], HOLTerm)
 destLet tm =
   case stripComb tm of
-    (view -> Const "LET" _ _, a:args) ->
+    (Const "LET" _, a:args) ->
       let (vars, lebod) = stripGAbs a
           eqs = zip vars args in
-        case view lebod of
-          Comb (view -> Const "LET_END" _ _) bod -> Just (eqs, bod)
+        case lebod of
+          Comb (Const "LET_END" _) bod -> Just (eqs, bod)
           _ -> Nothing
     _ -> Nothing
+
+{-|
+  Constructs a let binding term provided a list of variable/value pairs and a
+  body term.
+-}
+mkLet :: [(HOLTerm, HOLTerm)] -> HOLTerm -> HOL cls thry HOLTerm
+mkLet assigs bod =
+    do tmLetEnd <- mkConst "LET_END" [(tyA, typeOf bod)]
+       let (ls, rs) = unzip assigs
+           lend = fromRight $ mkComb tmLetEnd bod
+       lbod <- listMkGAbs ls lend
+       let (ty1, ty2) = fromJust . destFunTy $ typeOf lbod
+       tmLet <- mkConst "LET" [(tyA, ty1), (tyB, ty2)]
+       liftO $ listMkComb tmLet (lbod:rs)
 
 {-|
   Converts a numeral term to an 'Integer'.  Fails with 'Nothing' if internally
@@ -994,12 +1176,12 @@ destLet tm =
   > NUMERAL bits _0, where bits is a series of BIT0 and BIT1 terms  
 -} 
 destNumeral :: HOLTerm -> Maybe Integer
-destNumeral (view -> Comb (view -> Const "NUMERAL" _ _) r) = destNum r
-  where destNum :: HOLTerm -> Maybe Integer
-        destNum (view -> Const "_0" _ _) = Just 0
-        destNum (view -> Comb (view -> Const "BIT0" _ _) r') =
+destNumeral (Comb (Const "NUMERAL" _) r) = destNum r
+  where destNum :: Num a => HOLTerm -> Maybe a
+        destNum (Const "_0" _) = Just 0
+        destNum (Comb (Const "BIT0" _) r') =
           liftM (2 *) $ destNum r'
-        destNum (view -> Comb (view -> Const "BIT1" _ _) r') =
+        destNum (Comb (Const "BIT1" _) r') =
           liftM (\ x -> 1 + 2 * x) $ destNum r'
         destNum _ = Nothing
 destNumeral _ = Nothing

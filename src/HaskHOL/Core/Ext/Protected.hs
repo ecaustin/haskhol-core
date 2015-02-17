@@ -1,8 +1,5 @@
-{-# LANGUAGE ExistentialQuantification, FlexibleInstances, 
-             FunctionalDependencies, MultiParamTypeClasses, ScopedTypeVariables,
-             TemplateHaskell, TypeFamilies, TypeSynonymInstances, 
-             UndecidableInstances, ViewPatterns #-}
-
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables,     
+             TypeFamilies, TypeSynonymInstances #-}
 {-|
   Module:    HaskHOL.Core.Ext.Protected
   Copyright: (c) The University of Kansas 2013
@@ -26,31 +23,22 @@
   @Protected@ class and the 'liftProtectedExp' and 'liftProtected' methods.
 -}
 module HaskHOL.Core.Ext.Protected
-    ( Protected(protect, serve)
-    , PData
+    ( Protected
+    , protect
+    , protectM
+    , serve
+    , unsafeServe
+    , unsafeProtect
     , PType
     , PTerm
     , PThm
-    , liftProtectedExp       -- :: (Protected a, Typeable thry) => 
-                             --    PData a thry -> Q Exp
-    , liftProtected          -- :: (Protected a, Typeable thry) => 
-                             --    String -> PData a thry -> Q [Dec]
-    , proveCompileTime       -- :: Typeable thry => HOLContext thry -> String ->
-                             --    HOL Proof thry HOLThm -> Q [Dec]
-    , proveCompileTimeMany   -- :: Typeable thry => HOLContext thry -> [String] 
-                             --    -> HOL Proof thry [HOLThm] -> Q [Dec]
-    , extractBasicDefinition -- :: Typeable thry => HOLContext thry -> 
-                             --    String -> String -> Q [Dec]
-    , extractAxiom           -- :: Typeable thry => 
-                             --    HOLContext thry -> String -> Q [Dec]
+    , liftProtectedExp
+    , liftProtected
     ) where
 
-import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel hiding (typeOf)
+import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
-import HaskHOL.Core.Parser
 
-import Data.Typeable (typeOf, typeRepArgs)
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax (Lift(..))
 
@@ -68,23 +56,34 @@ import Language.Haskell.TH.Syntax (Lift(..))
   * Some boilerplate code to enable template haskell lifting.
 -}
 class Lift a => Protected a where
+    -- | The associated type for the 'Protected' class.
     data PData a thry
     -- | Protects a value by sealing it against a provided context.
-    protect :: HOLContext thry -> a -> PData a thry
+    protect :: TheoryPath thry -> a -> PData a thry
+    -- | Protects a value by sealing it against the current context.
+    protectM :: forall b cls thry. (b ~ a) => b -> HOL cls thry (PData b thry)
+    protectM a = return $! protect (undefined :: TheoryPath thry) a
     {-| 
       Unseals a protected value, returning it in a monadic computation whose
       current working theory satisfies the context that the value was originally
       sealed with.
     -}
     serve :: PData a thry -> HOL cls thry a
-    liftTy :: a -> Name
+    -- | Unseals a protected value, returning a pure, unprotected value.
+    unsafeServe :: PData a thry -> a
+    {- | An alias to the internal 'PData' constructor to create a fully 
+         polymorphic \"protected\" value. -}
+    unsafeProtect :: a -> PData a thry
+    liftTy :: a -> Type
     protLift :: PData a thry -> Q Exp
 
 instance Protected HOLThm where
     data PData HOLThm thry = PThm HOLThm
     protect _ = PThm
     serve (PThm thm) = return thm
-    liftTy _ = ''HOLThm
+    unsafeServe (PThm thm) = thm
+    unsafeProtect = PThm
+    liftTy _ = ConT ''HOLThm
     protLift (PThm thm) = conE 'PThm `appE` lift thm
 -- | Type synonym for protected 'HOLThm's.
 type PThm thry = PData HOLThm thry
@@ -93,7 +92,9 @@ instance Protected HOLTerm where
     data PData HOLTerm thry = PTm HOLTerm
     protect _ = PTm
     serve (PTm tm) = return tm
-    liftTy _ = ''HOLTerm
+    unsafeServe (PTm tm) = tm
+    unsafeProtect = PTm
+    liftTy _ = ConT ''HOLTerm
     protLift (PTm tm) = conE 'PTm `appE` lift tm
 -- | Type synonym for protected 'HOLTerm's.
 type PTerm thry = PData HOLTerm thry
@@ -102,41 +103,80 @@ instance Protected HOLType where
     data PData HOLType thry = PTy HOLType
     protect _ = PTy
     serve (PTy ty) = return ty
-    liftTy _ = ''HOLType
+    unsafeServe (PTy ty) = ty
+    unsafeProtect = PTy
+    liftTy _ = ConT ''HOLType
     protLift (PTy ty) = conE 'PTy `appE` lift ty
 -- | Type synonym for protected 'HOLType's.
 type PType thry = PData HOLType thry
 
-instance HOLTermRep (PTerm thry) thry where
-    toHTm = serve
+instance Protected Int where
+    data PData Int thry = PInt Int
+    protect _ = PInt
+    serve (PInt n) = return n
+    unsafeServe (PInt n) = n
+    unsafeProtect = PInt
+    liftTy _ = ConT ''Int
+    protLift (PInt n) = conE 'PInt `appE` lift n
 
-instance HOLTypeRep (PType thry) thry where
-    toHTy = serve
+instance Protected a => Protected [a] where
+    data PData [a] thry = PList [PData a thry]
+    protect c as = PList $ map (protect c) as
+    serve (PList as) = mapM serve as
+    unsafeServe (PList as) = map unsafeServe as
+    unsafeProtect as = PList $ map unsafeProtect as
+    liftTy _ = AppT ListT $ liftTy (undefined::a)
+    protLift (PList as) = conE 'PList `appE` listE (map protLift as)
 
+instance (Protected a, Protected b) => Protected (a, b) where
+    data PData (a, b) thry = PPair (PData a thry) (PData b thry)
+    protect c (a, b) = PPair (protect c a) (protect c b)
+    serve (PPair a b) = do a' <- serve a
+                           b' <- serve b
+                           return (a', b')
+    unsafeServe (PPair a b) = (unsafeServe a, unsafeServe b)
+    unsafeProtect (a, b) = PPair (unsafeProtect a) (unsafeProtect b)
+    liftTy _ = AppT (AppT (TupleT 2) (liftTy (undefined::a))) 
+                 (liftTy (undefined::b))
+    protLift (PPair a b) = conE 'PPair `appE` protLift a `appE` protLift b
+
+instance (Protected a, Protected b, Protected c) => Protected (a, b, c) where
+    data PData (a, b, c) thry = 
+        PTrip (PData a thry) (PData b thry) (PData c thry)
+    protect ctx (a, b, c) = 
+        PTrip (protect ctx a) (protect ctx b) (protect ctx c)
+    serve (PTrip a b c) = do a' <- serve a
+                             b' <- serve b
+                             c' <- serve c
+                             return (a', b', c')
+    unsafeServe (PTrip a b c) = (unsafeServe a, unsafeServe b, unsafeServe c)
+    unsafeProtect (a, b, c) = 
+        PTrip (unsafeProtect a) (unsafeProtect b) (unsafeProtect c)
+    liftTy _ = AppT (AppT (AppT (TupleT 3) (liftTy (undefined::a)))
+                          (liftTy (undefined::b)))
+                 (liftTy (undefined::c))
+    protLift (PTrip a b c) = 
+        conE 'PTrip `appE` protLift a `appE` protLift b `appE` protLift c
 
 {-
   Builds the theory contrainst for a lifted, protected value.  
   For example:
   
-  > buildThryType (x::PData a Bool)
+  > buildThryType (x::PData a BoolType)
 
   builds the context
 
   > forall thry. BoolCtxt thry => PData a thry
 -}
-buildThryType :: forall a thry. (Protected a, Typeable thry) => 
-                                PData a thry -> Type
+buildThryType :: forall a thry. (Protected a, CtxtName thry) => 
+                                PData a thry -> Q Type
 buildThryType _ =
-    let tyname = mkName "thry"
-        ctxtName = mkName $ topTheory ++ "Ctxt"
-        cls = ClassP ctxtName [VarT tyname] in
-      ForallT [PlainTV tyname] [cls] . 
-        AppT (AppT (ConT ''PData) . ConT $ liftTy (undefined :: a)) $ 
-             VarT tyname
-  where topTheory :: String
-        topTheory = 
-            let base = show . head . typeRepArgs $ typeOf (undefined :: thry) in
-              take (length base - 4) base
+    do tyname <- newName "thry"
+       let cls = ClassP (mkName $ ctxtName (undefined::thry)) [VarT tyname]
+       return . ForallT [PlainTV tyname] [cls] . 
+         AppT (AppT (ConT ''PData) $ liftTy (undefined :: a)) $ 
+           VarT tyname
+         
 
 {-| 
   Lifts a protected data value as an expression using an ascribed type.
@@ -148,11 +188,10 @@ buildThryType _ =
 
   > [| x :: forall thry. BoolCtxt thry => PData a Bool |]
 -}
-liftProtectedExp :: (Protected a, Typeable thry) => 
-                    PData a thry -> Q Exp
+liftProtectedExp :: (Protected a, CtxtName thry) => PData a thry -> Q Exp
 liftProtectedExp pdata =
   do pdata' <- protLift pdata
-     let ty = buildThryType pdata
+     ty <- buildThryType pdata
      return $! SigE pdata' ty
 
 {-| 
@@ -169,89 +208,12 @@ liftProtectedExp pdata =
 
   See 'extractAxiom' for a basic example of how this function may be used.
 -}
-liftProtected :: (Protected a, Typeable thry) => 
+liftProtected :: (Protected a, CtxtName thry) => 
                  String -> PData a thry -> Q [Dec]
 liftProtected lbl pdata =
   do pdata' <- protLift pdata
-     let ty = buildThryType pdata
-         name = mkName lbl
+     ty <- buildThryType pdata
+     let name = mkName lbl
          tysig = SigD name ty
          dec = ValD (VarP name) (NormalB pdata') []
      return [tysig, dec]
-
-
--- Compile Time Proof
---EvNote: long-term idea: change debuging printing to be based on cabal flag
-{-|
-  Evaluates a proof compilation, protects it with the theory used to evaluate
-  it, and then lifts it as a declaration of a given name with an ascribed type
-  signature.
-
-  Relies internally on 'protect' and 'liftProtected' to guarantee that the
-  resultant theorem is sealed with the right type.
--}
-proveCompileTime :: Typeable thry => HOLContext thry -> String -> 
-                                     HOL Proof thry HOLThm -> Q [Dec]
-proveCompileTime ctx lbl th =
-  do thm <- runIO $ 
-              do putStr $ "proving: " ++ lbl ++ "..."
-                 thm <- evalHOLCtxt (setBenignFlag FlagDebug >> th) ctx
-                 putStrLn "...proved."
-                 return thm
-     liftProtected lbl $ protect ctx thm
-
-{-|
-  A version of 'proveCompileTime' that works for a proof computation returning
-  multiple theorems.
-
-  Note that each resultant theorem must have a unique, provided name.
--}
-proveCompileTimeMany :: Typeable thry => HOLContext thry -> [String] -> 
-                                         HOL Proof thry [HOLThm] -> Q [Dec]
-proveCompileTimeMany ctx lbls ths =
-    let n = length lbls in
-      do thms <- runIO $ 
-                   do putStrLn $ "proving " ++ show n ++ " theorems"
-                      thms <- evalHOLCtxt (setBenignFlag FlagDebug >> ths) ctx
-                      if length thms /= n
-                         then fail $ "proveCompileTimeMany: number of " ++ 
-                                     "theorems and labels does not agree."
-                         else do putStrLn $ unwords lbls ++ " proved."
-                                 return thms
-         liftM concat . mapM (\ (lbl, thm) -> liftProtected lbl $ 
-                                                protect ctx thm) $ zip lbls thms
-
--- Extraction functions for Core State values
-{-|
-  Extracts a basic term definition from a provided context, protecting and 
-  lifting it with 'liftProtected'.  The extraction is performed by looking for 
-  a definition whose left hand side matches a provided constant name.
-  For example:
-
-  > extractBasicDefinition ctxtBool "defT" "T"
-
-  will return the spliceable list of declarations for the following theorem
-
-  @ |- T = (\ p:bool . p) = (\ p:bool . p) @
--}
-extractBasicDefinition :: Typeable thry => 
-                          HOLContext thry -> String -> String -> Q [Dec]
-extractBasicDefinition ctx lbl name =
-    do defns <- runIO $ evalHOLCtxt definitions ctx
-       let mb = find (\ x -> case destEq $ concl x of
-                               Just (view -> Const l _ _, _) -> l == name
-                               _ -> False) defns
-       case mb of
-         Nothing -> fail "extractBasicDefinition: definition not found"
-         Just th -> liftProtected lbl $ protect ctx th
-
-{-|
-  Extracts an axiom from a provided context, protecting and lifting it with
-  'liftProtected'.  The extraction is performed by looking for an axioms of
-  a given name, as specified when the axiom was created with 'newAxiom'.
--}
-extractAxiom :: Typeable thry => HOLContext thry -> String -> Q [Dec]
-extractAxiom ctx lbl =
-    do ax <- runIO $ evalHOLCtxt 
-                       (getAxiom lbl <?> "extractAxiom: axiom not found") ctx
-       liftProtected lbl $ protect ctx ax

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-|
   Module:    HaskHOL.Core.Parser.TypeParser
   Copyright: (c) The University of Kansas 2013
@@ -50,7 +51,6 @@ module HaskHOL.Core.Parser.TypeParser
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.State
 
 import HaskHOL.Core.Parser.Lib
 
@@ -76,13 +76,13 @@ popvar =
          Left is fresh.
          Right is existing.
        -}
-       let x' = '_':x
-       (_, opvars) <- getState
+       let x' = '_' `cons` x
+       (_, opvars, _) <- getState
        case lookup x' opvars of
          Nothing -> return . Left $ UTyVar False x' 0
          Just n -> return . Right $ UTyVar False x' n
 
-pbinty :: String -> String -> MyParser thry PreType -> MyParser thry PreType -> 
+pbinty :: String -> Text -> MyParser thry PreType -> MyParser thry PreType -> 
           MyParser thry PreType
 pbinty op name pty1 pty2 =
     do ty1 <- pty1
@@ -94,7 +94,7 @@ pbinty op name pty1 pty2 =
 putype :: MyParser thry PreType
 putype = 
     do myreservedOp "%"
-       tvs <- many1 psmall
+       tvs <- mymany1 psmall
        myreservedOp "."
        ty <- ptype
        return $! foldr PUTy ty tvs
@@ -116,7 +116,7 @@ pappty =
              Left (UTyVar _ s _) ->
                -- fresh ty op var so add it to state
                let n = length tys in
-                 do updateState $ second ((:) (s, n))
+                 do updateState (\ (x, ops, y) -> (x, (s, n):ops, y))
                     let c' = UTyVar False s n
                     return $! PTyComb c' tys
              Right c'@(UTyVar _ _ n) ->
@@ -127,7 +127,7 @@ pappty =
              _ -> fail $ "type parser: unrecognized case for type operator " ++
                          "variable")
         <|> ((do x <- myidentifier
-                 (ctxt, _) <- getState
+                 (ctxt, _, _) <- getState
                  case getTypeArityCtxt ctxt x of
                    Nothing -> fail $ "type parser: unsupported type " ++ 
                                      "variable application"
@@ -136,21 +136,32 @@ pappty =
                      then return $! PTyComb (PTyCon x) tys
                      else fail "type parser: bad arity for type application")
         <|> (case tys of
-               (ty:[]) -> return ty
+               [ty] -> return ty
                _ -> fail "type parser: unexpected list of types"))
-   <|> try (do tys <- many1 psmall
-               c <- popvar
-               case c of
-                 Left (UTyVar _ s _) ->
-                   let n = length tys in
-                     do updateState $ second ((:) (s, n))
-                        return $! PTyComb (UTyVar False s n) tys
-                 Right c'@(UTyVar _ _ n) ->
-                   if n == length tys
-                   then return $! PTyComb c' tys
-                   else fail "type parser: bad type operator application."
-                 _ -> fail "type parser: unrecognized case for type operator.")
-   <|> patomty
+   <|> mytry (do tys <- mymany1 psmall
+                 c <- popvar
+                 case c of
+                  Left (UTyVar _ s _) ->
+                    let n = length tys in
+                      do updateState (\ (x, ops, y) -> (x, (s, n):ops, y))
+                         return $! PTyComb (UTyVar False s n) tys
+                  Right c'@(UTyVar _ _ n) ->
+                    if n == length tys
+                    then return $! PTyComb c' tys
+                    else fail "type parser: bad type operator application."
+                  _ -> fail "type parser: unrecognized case for type operator.")
+   <|> (do ty <- patomty
+           mytry (do x <- myidentifier
+                     (ctxt, _, _) <- getState
+                     case getTypeArityCtxt ctxt x of
+                       Nothing -> fail $ "type parser: unrecognized constant" 
+                                         ++ " in unary application."
+                       Just n ->
+                           if n == 1
+                           then return $! PTyComb (PTyCon x) [ty]
+                           else fail $ "type parser: bad arity for unary type" 
+                                       ++ " application")
+            <|> return ty)
 
 patomty :: MyParser thry PreType
 patomty = 
@@ -159,15 +170,15 @@ patomty =
             case c of
               Left c'@(UTyVar _ s 0) ->
                 -- fresh ty-op of zero arity
-                do updateState $ second ((:) (s, 0))
+                do updateState (\ (x, ops, y) -> (x, (s, 0):ops, y))
                    return $! PTyComb c' []
               Right c'@(UTyVar _ _ 0) ->
                    return $! PTyComb c' []
               _ -> fail $ "type parser: type operator variable of non-zero " ++
                           "arity outside of application")
-    <|> (do x <- myidentifier <|> liftM show myinteger
-            (ctxt, _) <- getState
-            case x `lookup` typeAbbrevs ctxt of
+    <|> (do x <- myidentifier
+            (ctxt, _, _) <- getState
+            case x `mapLookup` typeAbbrevsCtxt ctxt of
               Just ty -> return $! pretypeOfType ty
               Nothing -> case getTypeArityCtxt ctxt x of
                            Nothing -> return $! UTyVar False x 0

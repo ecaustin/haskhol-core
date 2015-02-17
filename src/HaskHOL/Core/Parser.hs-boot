@@ -1,9 +1,8 @@
 module HaskHOL.Core.Parser where
 
-import HaskHOL.Core.State
+import HaskHOL.Core.Lib
+import HaskHOL.Core.Parser.Prims
 
-import HaskHOL.Core.Parser.Lib
+holTermParser :: Text -> HOLContext thry -> Either ParseError PreTerm
 
-holTermParser :: String -> HOLContext thry -> Either ParseError PreTerm
-
-holTypeParser :: String -> HOLContext thry -> Either ParseError PreType
+holTypeParser :: Text -> HOLContext thry -> Either ParseError PreType

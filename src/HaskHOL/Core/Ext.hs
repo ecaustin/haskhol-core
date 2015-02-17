@@ -1,5 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
-
+{-# LANGUAGE ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Ext
   Copyright: (c) The University of Kansas 2013
@@ -28,8 +27,8 @@ module HaskHOL.Core.Ext
        -- $QQ
     , module HaskHOL.Core.Ext.QQ
       -- * Theory Extension Methods
-    , extendCtxt -- :: Typeable thry => HOLContext thry -> 
-                 --    HOL cls thry () -> Name -> String -> Q [Dec]
+    , templateProvers
+    , extendTheory
       -- * Template Haskell Re-Exports
     , module Language.Haskell.TH {-|
         Re-exports 'Q', 'Dec', and 'Exp' for the purpose of writing type
@@ -41,75 +40,74 @@ module HaskHOL.Core.Ext
       -}
     ) where
 
-import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel hiding (typeOf)
-import HaskHOL.Core.State
+import HaskHOL.Core.Lib hiding (combine)
+import HaskHOL.Core.State.Monad
 
 import HaskHOL.Core.Ext.Protected
 import HaskHOL.Core.Ext.QQ
 
 import Data.Char (toUpper, toLower)
-import Data.Typeable (typeOf, typeRepArgs, TypeRep)
 
 import Language.Haskell.TH (Q, Dec, Exp)
 import Language.Haskell.TH.Quote (QuasiQuoter)
-import Language.Haskell.TH.Syntax
+import Language.Haskell.TH.Syntax  
+
+import Prelude hiding (FilePath)
+import Paths_haskhol_core
+import Shelly
+import System.FilePath (combine)
 
 {-|
-  Extends a theory by evaluating a provided computation, returning a list of
-  declarations containing:
+  The 'templateTypes' splice automatically generates the types and type 
+  families associated with a theory extension.  It constructs the following:
 
   * A new empty data declaration associated with the new theory.
 
-  * A new type class associated with the new theory to be used with
-    @DerivedCtxt@ along with the appropriate instances.
+  * A type synonym for the application of the new data type.
 
-  * The context value for the new theory.
+  * A closed type family for constraining computations to be used only with
+    contexts containing this checkpoint.
+  
+  The first argument is the context to be extended and the second argument is
+  the name of the new theory checkpoint.
+  For example,
 
-  * A class constraint alias that can be safely exported for use in type
-    signatures external to the library where it was defined.
+  > templateTypes ctxtBase "Bool"
 
-  * A quasiquoter for the new theory.
+  will produce the following declarations:
 
-  * A compile-time proof function for the new theory.
-
-  For example:
-
-  > extendCtxt ctxtBase loadBoolLib "bool"
-
-  will produce the following code
-
-  > data BoolThry deriving Typeable
+  > data BoolThry
+  > instance CtxtName BoolThry where
+  >     ctxtName _ = "BoolCtxt"
   > type BoolType = ExtThry BoolThry BaseThry
   >
-  > class BaseCtxt a => BoolContext a
-  > instance BaseCtxt b => BoolContext (ExtThry BoolThry b)
-  > instance BoolContext b => BoolContext (ExtThry a b)
-  > 
-  > class BoolContext a => BoolCtxt a
-  > instance BoolContext a => BoolCtxt a
+  > type family BoolContext a :: Bool where
+  >     BoolContext BaseThry = False
+  >     BoolContext (ExtThry a b) = (a == BoolThry) || (BoolContext b)
   >
-  > ctxtBool :: HOLContext BoolType
-  > ctxtBool = ...
-  >
-  > bool :: QuasiQuoter
-  > bool = baseQuoter ctxtBool
-  >
-  > proveBool :: String -> HOL Proof BoolType HOLThm -> Q [Dec]
-  > proveBool = proveCompileTime ctxtBool
-  >
-  > proveBoolMany :: [String] -> HOL Proof BoolType [HOLThm] -> Q [Dec]
-  > proveBoolMany = proveCompileTimeMany ctxtBool
--}             
-extendCtxt :: Typeable thry =>
-              HOLContext thry -> HOL cls thry () -> String -> Q [Dec]
-extendCtxt ctx ld lbl =
-        -- lower case label for quasiquoter    
-    let lowLbl = toLower (head lbl) : tail lbl
+  > type instance BoolThry == BoolThry = True
+
+  Regrettably, Template Haskell cannot currently handle splicing type 
+  equalities.  Thus, to provide a cleaner interface, it is recommended to
+  manually construct another type family to be used as the main 'Constraint':
+
+  > type family BoolCtxt a :: Constraint where
+  >     BoolCtxt a = (BaseCtxt a, BoolContext a ~ True)
+
+  Note that this new 'Constraint' can also be used to enforce the linearity of
+  type theory contexts.
+-}
+templateTypes :: forall thry. CtxtName thry => TheoryPath thry -> String 
+              -> Q [Dec]
+templateTypes _ lbl =
         -- upper case label for everything else
-        upLbl = toUpper (head lbl) : tail lbl
+    let upLbl = toUpper (head lbl) : tail lbl
         -- type of old theory
-        oldThry = buildOldThry . head . typeRepArgs $ typeOf ctx
+        oldThry = ConT . mkName $
+                    let oldCtxt = ctxtName (undefined::thry)
+                        oldType = take (length oldCtxt - 4) oldCtxt in
+                      if oldType == "Base" then "BaseThry"
+                      else oldType ++ "Type"
         -- general use type variables
         aName = mkName "a"
         aVar = VarT aName
@@ -117,78 +115,65 @@ extendCtxt ctx ld lbl =
 -- build data types
         dataName = mkName $ upLbl ++ "Thry"
         dataType = ConT dataName
-        dataDec = DataD [] dataName [] [] [''Typeable]
+        -- splices: instance CtxtName _Thry where ...
+        instDec = InstanceD [] (AppT (ConT ''CtxtName) (ConT dataName))
+                    [FunD 'ctxtName [Clause [WildP] 
+                      (NormalB (LitE (StringL $ upLbl ++ "Ctxt"))) []]]
+        dataDec = DataD [] dataName [] [] []
         tyName = mkName $ upLbl ++ "Type"
-        newThry = extThry `AppT` dataType `AppT` oldThry
+        newThry = ConT ''ExtThry `AppT` dataType `AppT` oldThry
+        -- splices: type _Type = ExtThry _Thry oldThry
         tyDec = TySynD tyName [] newThry
 -- build class and instances
         clsName = mkName $ upLbl ++ "Context"
-        oldThryName = let oldt = stripList (\ x -> case x of
-                                                     AppT l r -> Just (l, r)
-                                                     _ -> Nothing ) oldThry in
-                        case oldt of
-                          (ConT x:[]) -> show x
-                          (_:ConT x:_) -> show x
-                          _ -> error "extendCtxt: bad theory type."
-        -- ConT XThry ---> XCtxt
-        oldClsName = mkName $ take (length oldThryName - 4) oldThryName ++ 
-                              "Ctxt"
-        clsCon = ConT clsName
-        clsDec = ClassD [ClassP oldClsName [aVar]] clsName [PlainTV aName] [] []
-        clsIn1Dec = InstanceD [ClassP oldClsName [bVar]]
-                      (clsCon `AppT` (extThry `AppT` dataType `AppT` bVar)) []
-        clsIn2Dec = InstanceD [ClassP clsName [bVar]]
-                      (clsCon `AppT` (extThry `AppT` aVar `AppT` bVar)) []
+        -- splices: type instance _Context BaseThry = False
+        famBase =TySynEqn [ConT ''BaseThry] $ PromotedT 'False
+        famCond = AppT (AppT (ConT ''(||))
+                        (AppT (ConT clsName) bVar))
+                   (AppT (AppT (ConT ''(==)) aVar) (ConT dataName))     
+        -- splices: type instance _Context (ExtThry a b) = 
+        --              (a == _Thry) || (_Context b)     
+        famInd = TySynEqn [AppT (AppT (ConT ''ExtThry) aVar) bVar] famCond
+        -- splices: type family _Context a :: Bool
+        fam = ClosedTypeFamilyD clsName [PlainTV aName] (Just $ ConT ''Bool)
+                [famBase, famInd]
 -- class wrapper
-        clsName' = mkName $ upLbl ++ "Ctxt"
-        clsCon' = ConT clsName'
-        clsDec' = ClassD [ClassP clsName [aVar]] clsName' [PlainTV aName] [] []
-        clsInDec' = InstanceD [ClassP clsName [aVar]] (clsCon' `AppT` aVar) []
--- build context type; we build value later
-        ctxtName = mkName $ "ctxt" ++ upLbl
-        ctxtTySig = SigD ctxtName $ ConT ''HOLContext `AppT` newThry
--- build QuasiQuoter
-        qqName = mkName lowLbl
-        qqTySig = SigD qqName $ ConT ''QuasiQuoter
-        qqDec = ValD (VarP qqName) (NormalB $ 
-                  VarE 'baseQuoter `AppE` VarE ctxtName) []
--- build provers
-        -- Q [Dec]
-        qdecType = ConT ''Q `AppT` (ListT `AppT` ConT ''Dec)
-        cont b = if b then AppT ListT else id
-        name b = mkName $ "prove" ++ upLbl ++ if b then "Many" else ""
-        proveName b = if b then 'proveCompileTimeMany 
-                           else 'proveCompileTime
-        -- HOL Proof newThry HOLThm
-        holType b = ConT ''HOL `AppT` ConT ''Proof `AppT` 
-                    newThry `AppT` cont b (ConT ''HOLThm)
-        proverTySig b = SigD (name b) $
-                        ArrowT `AppT` cont b (ConT ''String) `AppT`
-                        (ArrowT `AppT` holType b `AppT` qdecType)
-        proveDec b = ValD (VarP $ name b) (NormalB $ 
-                     VarE (proveName b) `AppE` VarE ctxtName) [] in
--- build values
-      do lctx <- lift =<< runIO (execHOLCtxt ld ctx)
-         let ctxtDec = ValD (VarP ctxtName) (NormalB lctx) []
-         return [ dataDec, tyDec               -- types
-                , clsDec, clsIn1Dec, clsIn2Dec -- class and instances
-                , clsDec', clsInDec'           -- class alias
-                , ctxtTySig, ctxtDec           -- context value
-                , qqTySig, qqDec               -- quasiquoter
-                , proverTySig False, proveDec False -- provers
-                , proverTySig True, proveDec True
-                ]
-         
+        -- splices: type instance _Thry == _Thry = True
+        clsEq = TySynInstD ''(==) . 
+                  TySynEqn [ConT dataName, ConT dataName] $ PromotedT 'True in
+          return [ dataDec, tyDec, instDec               -- types
+                 , fam
+                 , clsEq
+                 ]
 
-  where extThry :: Type
-        extThry = ConT ''ExtThry
-        
-        buildOldThry :: TypeRep -> Type
-        buildOldThry ty = 
-            case typeRepArgs ty of
-              [] -> ConT . mkName $ show ty
-              ts -> let ts' = map buildOldThry ts in
-                      foldl1 (\ acc x -> extThry `AppT` acc `AppT` x) ts' 
+{-|
+  The 'templateProvers' splice automatically generates the 'QuasiQuoter'
+  associated with a theory extension.  The provided
+  name should be the theory context checkpoint built with the 'extendTheory' 
+  splice.
+
+  For example,
+
+  > templateProvers 'ctxtBool
+
+  will produce the following declarations:
+
+  > bool :: QuasiQuoter
+  > bool = baseQuoter ctxtBool
+-}
+templateProvers :: Name -> Q [Dec]
+templateProvers ctxName =
+-- build QuasiQuoter
+    let upLbl = drop 4 $ nameBase ctxName
+        lowLbl = toLower (head upLbl) : tail upLbl
+        --tyName = mkName $ upLbl ++ "Type"
+        qqName = mkName lowLbl
+        -- splices: _ :: QuasiQuoter
+        qqTySig = SigD qqName $ ConT ''QuasiQuoter
+        -- splices: _ = baseQuoter ctxt_
+        qqDec = ValD (VarP qqName) (NormalB $ 
+                  VarE 'baseQuoter `AppE` VarE ctxName) [] in
+      return [ qqTySig, qqDec ]
 
 -- Documentation copied from sub-modules
 
@@ -210,3 +195,46 @@ extendCtxt ctx ld lbl =
   documentation for 'base' for a brief discussion on when quasi-quoting should
   be used vs. 'toHTm'.
 -}
+
+{-|
+  The 'extendTheory' splice acts as a compile-time wrapper to 'runHOL', used for
+  the purpose of creating new theory contexts.  It takes three arguments:
+
+  * The theory to be extended.
+
+  * The base name of the new theory to be created.
+
+  * The 'HOL' computation that will perform the extension.
+
+  For example:
+
+  > extendTheory ctxtBase "Bool" $ ...
+
+  Additionally, 'extendTheory' calls the 'templateTypes' splice to create the
+  type class wizardy associated with theory contexts and creates an
+  appropriately typed wrapper for 'mkTheoryPath', e.g.:
+
+  > ctxtBool :: TheoryPath BoolType
+  > ctxtBool = mkTheoryPath
+-}
+extendTheory :: CtxtName thry => TheoryPath thry -> String -> HOL Theory thry ()
+             -> Q [Dec]
+extendTheory old new ld =
+       -- run the load function
+    do runIO $
+         do dir <- getDataDir
+            let new' = dir `combine` (new ++ "Ctxt")
+            shelly $ 
+              do cond <- test_d . fromText $ pack new'
+                 when cond . echo . pack $
+                   "Note:  Using existing theory context for " ++ new
+                 unless cond . liftIO $
+                   runHOL (ld >> checkpointProofs) old new'
+       -- splices: ctxt_ :: TheoryPath _Type
+       --          ctxt_ = mkTheoryPath
+       let cname = mkName $ "ctxt" ++ new
+           ctype = ConT . mkName $ new ++ "Type"
+           tySig = SigD cname (ConT ''TheoryPath `AppT` ctype)
+           def = ValD (VarP cname) (NormalB (VarE 'mkTheoryPath)) []
+       tyDefs <- templateTypes old new
+       return $! tyDefs ++ [tySig, def]

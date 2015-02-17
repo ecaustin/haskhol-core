@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-|
   Module:    HaskHOL.Core
   Copyright: (c) The University of Kansas 2013
@@ -14,23 +15,15 @@
 -}
 module HaskHOL.Core
     ( -- * 'HOLTermRep' and 'HOLTypeRep' Overloads
-      newConstant        -- :: HOLTypeRep ty thry => 
-                         --    String -> ty -> HOL Theory thry ()
-    , newAxiom           -- :: HOLTermRep tm thry => 
-                         --    String -> tm -> HOL Theory thry HOLThm
-    , newBasicDefinition -- :: HOLTermRep tm thry => 
-                         --    tm -> HOL Theory thry HOLThm
-    , makeOverloadable   -- :: HOLTypeRep ty thry => 
-                         --    String -> ty -> HOL Theory thry ()
-    , reduceInterface    -- :: HOLTermRep tm thry => 
-                         --    String -> tm -> HOL Theory thry ()
-    , overrideInterface  -- :: HOLTermRep tm thry => 
-                         --    String -> tm -> HOL Theory thry ()
-    , overloadInterface  -- :: HOLTermRep tm thry => 
-                         --    String -> tm -> HOL Theory thry ()
-    , prioritizeOverload -- :: HOLTypeRep ty thry => ty -> HOL Theory thry ()
-    , newTypeAbbrev      -- :: HOLTypeRep ty thry => 
-                         --    String -> ty -> HOL Theory thry ()
+      newConstant
+    , newAxiom
+    , newBasicDefinition
+    , makeOverloadable
+    , reduceInterface
+    , overrideInterface
+    , overloadInterface
+    , prioritizeOverload
+    , newTypeAbbrev
       -- * Library and Utility Functions
     , module HaskHOL.Core.Lib
       -- * Logical Kernel
@@ -45,10 +38,11 @@ module HaskHOL.Core
     , module HaskHOL.Core.Printer
       -- * HaskHOL Core Extensions
     , module HaskHOL.Core.Ext
+    , Constraint -- | A re-export of 'Constraint' from @GHC.Prim@.
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel
+import HaskHOL.Core.Kernel hiding (axiomThm, newDefinedConst, newDefinedTypeOp)
 import HaskHOL.Core.State hiding ( newConstant, newAxiom, newBasicDefinition )
 import HaskHOL.Core.Basics
 import HaskHOL.Core.Parser hiding ( makeOverloadable, reduceInterface 
@@ -62,27 +56,32 @@ import qualified HaskHOL.Core.State as S ( newConstant, newAxiom
 import qualified HaskHOL.Core.Parser as P ( makeOverloadable, reduceInterface 
                                           , overrideInterface, overloadInterface
                                           , prioritizeOverload, newTypeAbbrev )
+
+-- This re-export has to exist at the top-most module for some reason?
+import GHC.Prim (Constraint)
+
 -- from state
 {-| 
   A redefinition of 'S.newConstant' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newConstant :: HOLTypeRep ty thry => String -> ty -> HOL Theory thry ()
+newConstant :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
 newConstant s = S.newConstant s <=< toHTy
 
 {-| 
   A redefinition of 'S.newAxiom' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newAxiom :: HOLTermRep tm thry => String -> tm -> HOL Theory thry HOLThm
+newAxiom :: HOLTermRep tm Theory thry => Text -> tm -> HOL Theory thry HOLThm
 newAxiom s = S.newAxiom s <=< toHTm
 
 {-| 
   A redefinition of 'S.newBasicDefinition' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newBasicDefinition :: HOLTermRep tm thry => tm -> HOL Theory thry HOLThm
-newBasicDefinition = S.newBasicDefinition <=< toHTm
+newBasicDefinition :: HOLTermRep tm Theory thry => Text -> tm 
+                   -> HOL Theory thry HOLThm
+newBasicDefinition lbl = S.newBasicDefinition lbl <=< toHTm
 
 
 -- from parser
@@ -90,41 +89,44 @@ newBasicDefinition = S.newBasicDefinition <=< toHTm
   A redefinition of 'P.makeOverloadable' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-makeOverloadable :: HOLTypeRep ty thry => String -> ty -> HOL Theory thry ()
+makeOverloadable :: HOLTypeRep ty Theory thry => Text -> ty 
+                 -> HOL Theory thry ()
 makeOverloadable s = P.makeOverloadable s <=< toHTy
 
 {-|
   A redefinition of 'P.reduceInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-reduceInterface :: HOLTermRep tm thry => String -> tm -> HOL Theory thry ()
+reduceInterface :: HOLTermRep tm Theory thry => Text -> tm 
+                -> HOL Theory thry ()
 reduceInterface s = P.reduceInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.overrideInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-overrideInterface :: HOLTermRep tm thry => 
-                     String -> tm -> HOL Theory thry ()
+overrideInterface :: HOLTermRep tm Theory thry => Text -> tm 
+                  -> HOL Theory thry ()
 overrideInterface s = P.overrideInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.overloadInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-overloadInterface :: HOLTermRep tm thry => String -> tm -> HOL Theory thry ()
+overloadInterface :: HOLTermRep tm Theory thry => Text -> tm 
+                  -> HOL Theory thry ()
 overloadInterface s = P.overloadInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.prioritizeOverload' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-prioritizeOverload :: HOLTypeRep ty thry => ty -> HOL Theory thry ()
+prioritizeOverload :: HOLTypeRep ty Theory thry => ty -> HOL Theory thry ()
 prioritizeOverload = P.prioritizeOverload <=< toHTy
 
 {-|
   A redefinition of 'P.newTypeAbbrev' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-newTypeAbbrev :: HOLTypeRep ty thry => String -> ty -> HOL Theory thry ()
+newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
 newTypeAbbrev s = P.newTypeAbbrev s <=< toHTy

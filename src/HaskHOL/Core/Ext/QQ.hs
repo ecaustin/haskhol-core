@@ -17,9 +17,9 @@
   expressing 'HOLTerm's as 'String's, i.e. @\"\\ x . x\"@.
 -}
 module HaskHOL.Core.Ext.QQ
-    ( baseQuoter  -- :: Typeable thry => HOLContext thry -> QuasiQuoter
-    , base        -- :: QuasiQuoter
-    , str         -- :: QuasiQuoter
+    ( baseQuoter
+    , baseQQ
+    , str
     ) where
 
 import HaskHOL.Core.Lib
@@ -33,10 +33,6 @@ import HaskHOL.Core.Ext.Protected
 -}
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
-import Language.Haskell.TH.Syntax (Lift(..))
-
--- Only used here, not really necessary to include in Core.Lib
-import Data.Char (isSpace)
 
 {-|
   This is the base quasi-quoter for the HaskHOL system.  When provided with a
@@ -46,25 +42,27 @@ import Data.Char (isSpace)
   Note that, at this point in time, we only allowing quoting at the expression
   level.
 -}
-baseQuoter :: Typeable thry => HOLContext thry -> QuasiQuoter
-baseQuoter ctxt = QuasiQuoter quoteBaseExps nothing nothing nothing
-    where quoteBaseExps x =
-              liftProtectedExp =<< 
-                (runIO . evalHOLCtxt (liftM (protect ctxt) $ toHTm x) $ ctxt)
+baseQuoter :: CtxtName thry => TheoryPath thry -> QuasiQuoter
+baseQuoter thry = QuasiQuoter quoteBaseExps nothing nothing nothing
+    where quoteBaseExps :: String -> Q Exp 
+          quoteBaseExps (':':x) = liftProtectedExp =<< runIO
+            (runHOLProof (liftM (protect thry) . toHTy $ pack x) thry)
+          quoteBaseExps x = liftProtectedExp =<< runIO 
+            (runHOLProof (liftM (protect thry) . toHTm $ pack x) thry)
           nothing _ = fail "quoting here not supported"
 
 {-| 
   An instance of 'baseQuoter' for the core theory context, 'ctxtBase'.
   Example:
 
-  > [base| x = y |]
+  > [baseQQ| x = y |]
 
   will parse the provided string and construct the 'HOLTerm' @x = y@ at compile
   time.  Note that this term is protected, such that it has to be accessed via
   'serve'.  This is advantageous in computations that may be run many times, 
   for example:
 
-  > do tm <- serve [base| x = y |]
+  > do tm <- serve [baseQQ| x = y |]
   >    ...
 
   will parse the term exactly once, only checking the @thry@ tag of the
@@ -78,16 +76,15 @@ baseQuoter ctxt = QuasiQuoter quoteBaseExps nothing nothing nothing
   that themselves are evaluated at copmile time to minimize the amount of work
   Template Haskell has to do.
 -}
-base :: QuasiQuoter
-base = baseQuoter ctxtBase
+baseQQ :: QuasiQuoter
+baseQQ = baseQuoter ctxtBase
 
 {-|
-  This is a specialized quasi-quoter for 'String's.  It can be used to strip
+  This is a specialized quasi-quoter for 'Text's.  It can be used to strip
   white space and automatically escape special characters.  It is typically used
   in conjunction with 'toHTm' directly or indirectly.
 -}
 str :: QuasiQuoter
 str = QuasiQuoter quoteStrExp nothing nothing nothing
-    where quoteStrExp x = lift $ trim x
-          trim = dropWhile isSpace . dropWhileEnd isSpace
+    where quoteStrExp x = [| textStrip $ pack $(litE $ StringL x) |]
           nothing _ = fail "quoting here not supported"

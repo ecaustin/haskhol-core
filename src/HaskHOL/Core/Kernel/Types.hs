@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE MultiParamTypeClasses, OverloadedStrings #-}
 
 {-|
   Module:    HaskHOL.Core.Kernel.Types
@@ -25,62 +25,74 @@ module HaskHOL.Core.Kernel.Types
        -- ** A High-Level Overview of HOL Types
         -- $HOLTypes
       HOLType
-    , HOLTypeView(..)
+    , pattern TyVar
+    , pattern TyApp
+    , pattern UType
        -- ** A Quick Note on Type Variable Distinction
         -- $TypeDistinction
     , TypeOp
+    , pattern TyOpVar
+    , pattern TyPrimitive
+    , pattern TyDefined
     , HOLTypeEnv
     , SubstTrip
       -- * HOL Light Type Primitives
        -- ** Alpha-Equivalence of Types
-    , tyAlphaOrder -- :: HOLType -> HOLType -> Ordering
-    , tyAConv      -- :: HOLType -> HOLType -> Bool
+    , tyAlphaOrder
+    , tyAConv
        -- ** Predicates, Constructors, and Destructors for Basic Types
-    , isVarType   -- :: HOLType -> Bool
-    , isType      -- :: HOLType -> Bool
-    , mkVarType   -- :: String -> HOLType
-    , destVarType -- :: HOLType -> Maybe String
-    , destType    -- :: HOLType -> Maybe (String, [HOLType])
+    , isVarType
+    , isType
+    , mkVarType
+    , destVarType
+    , destType
        -- ** Type Variable Extractors
-    , tyVars    -- :: HOLType -> [HOLType]
-    , catTyVars -- :: [HOLType] -> [HOLType]
+    , tyVars
+    , catTyVars
        -- ** Type Substitution
     , TypeSubst
-    , typeSubst     --  :: TypeSubst a b => [(a, b)] -> HOLType -> HOLType
-    , typeSubstFull --  :: SubstTrip -> HOLType -> HOLType
+    , typeSubst
+    , typeSubstFull
        -- ** Commonly Used Types and Functions
-    , tyBool    -- :: HOLType
-    , tyA       -- :: HOLType
-    , tyB       -- :: HOLType
-    , destFunTy -- :: HOLType -> Maybe (HOLType, HOLType)
-    , typeOf    -- :: HOLTerm -> HOLType
+    , tyBool
+    , pattern TyBool
+    , pattern TyFun
+    , pattern (:->)
+    , tyA
+    , pattern TyA
+    , tyB
+    , pattern TyB
+    , destFunTy
+    , typeOf
       -- * Stateless HOL Type Primitives
        -- ** Predicates, Constructors, and Destructors for Type Operators
-    , isTypeOpVar   -- :: TypeOp -> Bool
-    , newPrimTypeOp -- :: String -> Int -> TypeOp
-    , mkTypeOpVar   -- :: String -> TypeOp
-    , destTypeOp    -- :: TypeOp -> (String, Int)
+    , isTypeOpVar
+    , newPrimitiveTypeOp
+    , mkTypeOpVar
+    , destTypeOp
        -- ** Commonly Used Type Operators
-    , tyOpBool -- :: TypeOp
-    , tyOpFun  -- :: TypeOp
-    , tyApp    -- :: TypeOp -> [HOLType] -> Either String HOLType
+    , tyOpBool
+    , pattern TyOpBool
+    , tyOpFun
+    , pattern TyOpFun
+    , tyApp
        -- ** Type Operator Variable Extractors
-    , typeOpVars    -- :: HOLType -> [TypeOp]
-    , catTypeOpVars -- :: [HOLType] -> [TypeOp]
+    , typeOpVars
+    , catTypeOpVars
       -- * HOL2P Type Primitives
        -- ** Predicates, Constructors, and Destructors for Universal Types
-    , isUType            -- :: HOLType -> Bool
-    , isSmall            -- :: HOLType -> Bool
-    , mkUType            -- :: HOLType -> HOLType -> Either String HOLType
-    , mkUTypes           -- :: [HOLType] -> HOLType -> Either String HOLType
-    , uTypeFromTypeOpVar -- :: TypeOp -> Int -> Either String HOLType
-    , mkSmall            -- :: HOLType -> Either String HOLType
-    , destUType          -- :: HOLType -> Maybe (HOLType, HOLType)
-    , destUTypes         -- :: HOLType -> Maybe ([HOLType], HOLType)
+    , isUType  
+    , isSmall 
+    , mkUType
+    , mkUTypes 
+    , uTypeFromTypeOpVar
+    , mkSmall
+    , destUType
+    , destUTypes
        -- ** Commonly Used Functions
-    , containsUType -- :: HOLType -> Bool
-    , variantTyVar  -- :: [HOLType] -> HOLType -> HOLType
-    , variantTyVars -- :: [HOLType] -> [HOLType] -> HOLType
+    , containsUType
+    , variantTyVar
+    , variantTyVars
     ) where
 
 import HaskHOL.Core.Lib
@@ -95,30 +107,27 @@ import HaskHOL.Core.Kernel.Prims
 -- | Provides an ordering for two types modulo alpha-equivalence.
 tyAlphaOrder :: HOLType -> HOLType -> Ordering
 tyAlphaOrder = tyorda []
-  where tyorda :: HOLTypeEnv -> HOLType -> HOLType -> Ordering
-        tyorda env ty1 ty2
-            | ty1 == ty2 && all (uncurry (==)) env = EQ
-            | otherwise =
-                case (ty1, ty2) of
-                  (TyVarIn{}, TyVarIn{}) -> alphavars env ty1 ty2
-                  (TyAppIn tyop1 args1, TyAppIn tyop2 args2) ->
-                      case compare tyop1 tyop2 of
-                        EQ -> tyordas env args1 args2
-                        res -> res
-                  (UTypeIn v1 t1, UTypeIn v2 t2) -> 
-                      tyorda ((v1, v2):env) t1 t2
-                  (TyVarIn{}, _) -> LT
-                  (_, TyVarIn{}) -> GT
-                  (TyAppIn{}, _) -> LT
-                  (_, TyAppIn{}) -> GT
+  where tyorda :: [(HOLType, HOLType)] -> HOLType -> HOLType -> Ordering
+        tyorda env ty1@TyVarIn{} ty2@TyVarIn{} = 
+            alphavars env ty1 ty2
+        tyorda env (TyAppIn tyop1 args1) (TyAppIn tyop2 args2) =
+            case compare tyop1 tyop2 of
+              EQ -> tyordas env args1 args2
+              res -> res
+        tyorda env (UTypeIn v1 t1) (UTypeIn v2 t2) = 
+            tyorda ((v1, v2):env) t1 t2
+        tyorda _ TyVarIn{} _ = LT
+        tyorda _ _ TyVarIn{} = GT
+        tyorda _ TyAppIn{} _ = LT
+        tyorda _ _ TyAppIn{} = GT
 
-        alphavars :: HOLTypeEnv -> HOLType -> HOLType -> Ordering
-        alphavars [] ty1 ty2 = compare ty1 ty2
-        alphavars ((t1, t2):oenv) ty1 ty2
-            | ty1 == t1 = if ty2 == t2 then EQ else LT
-            | otherwise = if ty2 == t2 then GT else alphavars oenv ty1 ty2
+        alphavars :: [(HOLType, HOLType)] -> HOLType -> HOLType -> Ordering
+        alphavars [] x y = x `compare` y
+        alphavars ((t1, t2):oenv) x y
+            | x == t1 = if y == t2 then EQ else LT
+            | otherwise = if y == t2 then GT else alphavars oenv x y
 
-        tyordas :: HOLTypeEnv -> [HOLType] -> [HOLType] -> Ordering
+        tyordas :: [(HOLType, HOLType)] -> [HOLType] -> [HOLType] -> Ordering
         tyordas _ [] [] = EQ
         tyordas _ [] _ = LT
         tyordas _ _ [] = GT
@@ -145,14 +154,14 @@ isType _ = False
   Constructs a type variable of a given name.  Note that the resultant type 
   variable is unconstrained.
 -}
-mkVarType :: String -> HOLType
+mkVarType :: Text -> HOLType
 mkVarType = TyVarIn False
 
 {-| 
   Destructs a type variable, returning its name.  Fails with 'Nothing' if called
   on a non-variable type.
 -}
-destVarType :: HOLType -> Maybe String
+destVarType :: HOLType -> Maybe Text
 destVarType (TyVarIn _ s) = Just s
 destVarType _ = Nothing
 
@@ -170,9 +179,10 @@ destType _ = Nothing
   operator variables.
 -}
 tyVars :: HOLType -> [HOLType]
-tyVars tv@TyVarIn{} = [tv]
+tyVars (UTypeIn tv ty) = 
+    tyVars ty \\ [tv]  
 tyVars (TyAppIn _ args) = catTyVars args
-tyVars (UTypeIn tv ty) = tyVars ty \\ [tv]
+tyVars tv@TyVarIn{} = [tv] 
 
 {-| 
   Returns the list of all type variables in a list of types, not including type
@@ -222,13 +232,13 @@ instance TypeSubst HOLType HOLType where
     typeSubst' = typeTypeSubst
 
 instance TypeSubst TypeOp TypeOp where
-    validSubst (_, TyOpVar{}) = False
-    validSubst (TyOpVar{}, _) = True
+    validSubst (_, TyOpVarIn{}) = False
+    validSubst (TyOpVarIn{}, _) = True
     validSubst _ = False
     typeSubst' = typeOpSubst
 
 instance TypeSubst TypeOp HOLType where
-    validSubst (TyOpVar{}, UTypeIn{}) = True
+    validSubst (TyOpVarIn{}, UTypeIn{}) = True
     validSubst _ = False
     typeSubst' = typeOpInst
 
@@ -260,14 +270,13 @@ typeSubstFull (tyenv, tyOps, opOps) =
 typeTypeSubst :: HOLTypeEnv -> HOLType -> HOLType
 typeTypeSubst [] t = t
 typeTypeSubst tyenv t =
-    typeSubstRec (filter validSubst tyenv) t
-  where typeSubstRec :: HOLTypeEnv -> HOLType -> HOLType
-        typeSubstRec tyins ty@TyVarIn{} = assocd ty tyins ty
+    fromRight $ typeSubstRec (filter validSubst tyenv) t
+  where typeSubstRec :: HOLTypeEnv -> HOLType -> Either String HOLType
         typeSubstRec tyins (TyAppIn op args) =
-            TyAppIn op $ map (typeSubstRec tyins) args
+            tyApp op =<< mapM (typeSubstRec tyins) args
         typeSubstRec tyins ty@(UTypeIn tv tbody) =
             let tyins' = filter (\ (x, _) -> x /= tv) tyins in
-              if null tyins' then ty
+              if null tyins' then Right ty
               -- test for name capture, renaming instances of tv if necessary
               else if any (\ (x, t') -> tv `elem` tyVars t' && 
                                         x `elem` tyVars tbody) tyins'
@@ -276,29 +285,45 @@ typeTypeSubst tyenv t =
                             tvrepls = catTyVars . mapMaybe (`lookup` tyins') $
                                         intersect tvbs tvpatts
                             tv' = variantTyVar ((tvbs \\ tvpatts) `union` 
-                                                tvrepls) tv in
-                          UTypeIn tv' $ typeSubstRec ((tv, tv') : tyins') tbody
-                   else UTypeIn tv $ typeSubstRec tyins' tbody              
+                                                  tvrepls) tv in
+                          mkUType tv' =<< typeSubstRec ((tv, tv'):tyins') tbody
+                   else mkUType tv =<< typeSubstRec tyins' tbody
+        typeSubstRec tyins ty@TyVarIn{} = Right $ assocd ty tyins ty
                                 
 -- | Alias to the primitive boolean type.
 {-# INLINEABLE tyBool #-}
 tyBool :: HOLType
-tyBool = TyAppIn tyOpBool []
+tyBool = fromRight $ tyApp tyOpBool []
+
+-- | The pattern synonym equivalent of 'tyBool'.
+pattern TyBool <- TyApp TyOpBool []
+
+-- | The pattern synonym for easily matching on function types.
+pattern TyFun ty1 ty2 <- TyApp TyOpFun [ty1, ty2] 
+
+-- | An infix alias to 'TyFun'.
+pattern ty1 :-> ty2 <- TyFun ty1 ty2
 
 -- Used for error cases in type checking only.  Not exported.
 {-# INLINEABLE tyBottom #-}
 tyBottom :: HOLType
-tyBottom = TyAppIn tyOpBottom []
+tyBottom = fromRight $ tyApp tyOpBottom []
 
 -- | Alias to the unconstrained type variable @A@.
 {-# INLINEABLE tyA #-}
 tyA :: HOLType
 tyA = TyVarIn False "A"
 
+-- | The pattern synonym equivalent of 'tyA'.
+pattern TyA <- TyVar False "A"
+
 -- | Alias to the unconstrained type variable @B@.
 {-# INLINEABLE tyB #-}
 tyB :: HOLType
 tyB = TyVarIn False "B"
+
+-- | The pattern synonym equivalent of 'tyB'.
+pattern TyB <- TyVar False "B"
 
 {-| 
   Specialized version of 'destType' that returns the domain and range of a
@@ -306,7 +331,8 @@ tyB = TyVarIn False "B"
   primitive function type.
 -}
 destFunTy :: HOLType -> Maybe (HOLType, HOLType)
-destFunTy (TyAppIn (TyPrim "fun" _) [ty1, ty2]) = Just (ty1, ty2)
+destFunTy (TyAppIn (TyPrimitiveIn "fun" _) [ty1, ty2]) = 
+    Just (ty1, ty2)
 destFunTy _ = Nothing
 
 {-|
@@ -324,29 +350,32 @@ typeOf (CombIn x _) =
     case destType $ typeOf x of
       Just (_, _ : ty : _) -> ty
       _ -> tyBottom
-typeOf (AbsIn (VarIn _ ty) tm) =
-    TyAppIn tyOpFun [ty, typeOf tm]
+typeOf (AbsIn (VarIn _ ty) t) =
+    fromRight $ tyApp tyOpFun [ty, typeOf t]
 typeOf AbsIn{} = tyBottom
-typeOf (TyAbsIn tv tb) = UTypeIn tv $ typeOf tb
+typeOf (TyAbsIn tv tb) = 
+    fromRight . mkUType tv $ typeOf tb
 typeOf (TyCombIn t ty) =
     case typeOf t of
-      (UTypeIn tv tbody) -> typeSubst [(tv, ty)] tbody
+      (UTypeIn tv tbody) -> 
+          typeSubst [(tv, ty)] tbody
       _ -> tyBottom
+
 
 {-
    Stateless HOL Type Primitives
 -}
 -- | Predicate for type operator variables.
 isTypeOpVar :: TypeOp -> Bool
-isTypeOpVar TyOpVar{} = True
+isTypeOpVar TyOpVarIn{} = True
 isTypeOpVar _ = False
 
 {-| 
   Constructs a primitive type operator of a given name and arity.  Primitive
   type operators are used to represent constant, but undefined, types.
 -}
-newPrimTypeOp :: String -> Int -> TypeOp
-newPrimTypeOp = TyPrim
+newPrimitiveTypeOp :: Text -> Int -> TypeOp
+newPrimitiveTypeOp = TyPrimitiveIn
 
 {-|
   Constructs a type operator variable of a given name.  Note that type
@@ -357,31 +386,39 @@ newPrimTypeOp = TyPrim
   in a term have the same arity.  The same protection is not provided for terms
   that are manually constructed.
 -}
-mkTypeOpVar :: String -> TypeOp
-mkTypeOpVar = TyOpVar
+mkTypeOpVar :: Text -> TypeOp
+mkTypeOpVar = TyOpVarIn
 
 {-| 
   Destructs a type operator, returning its name and arity.  Note that we use -1 
   to indicate the arity of a type operator variable since that information is 
   not carried.
 -}
-destTypeOp :: TypeOp -> (String, Int)
-destTypeOp (TyOpVar name) = (name, -1)
-destTypeOp (TyPrim name arity) = (name, arity)
-destTypeOp (TyDefined name arity _) = (name, arity)
+destTypeOp :: TypeOp -> (Text, Int)
+destTypeOp (TyOpVarIn name) = (name, -1)
+destTypeOp (TyPrimitiveIn name arity) = (name, arity)
+destTypeOp (TyDefinedIn name arity _) = (name, arity)
 
 -- | Alias to the primitive boolean type operator.
 {-# INLINEABLE tyOpBool #-}
 tyOpBool :: TypeOp
-tyOpBool = TyPrim "bool" 0
+tyOpBool = TyPrimitiveIn "bool" 0
+
+-- | The pattern synonym equivalent of 'tyOpBool'.
+pattern TyOpBool <- TyPrimitive "bool" 0
+
 -- Used for error cases in type checking only.  Not exported.
 {-# INLINEABLE tyOpBottom #-}
 tyOpBottom :: TypeOp
-tyOpBottom = TyPrim "_|_" 0
+tyOpBottom = TyPrimitiveIn "_|_" 0
+
 -- | Alias to the primitive function type operator.
 {-# INLINEABLE tyOpFun #-}
 tyOpFun :: TypeOp
-tyOpFun = TyPrim "fun" 2
+tyOpFun = TyPrimitiveIn "fun" 2
+
+-- | The pattern synonym equivalent of 'tyOpFun'.
+pattern TyOpFun <- TyPrimitive "fun" 2
 
 {-|
   Constructs a type application from a provided type operator and list of type
@@ -392,9 +429,9 @@ tyOpFun = TyPrim "fun" 2
   * A type operator's arity disagrees with the length of the argument list.
 -}
 tyApp :: TypeOp -> [HOLType] -> Either String HOLType
-tyApp tyOp@TyOpVar{} [] = 
+tyApp tyOp@TyOpVarIn{} [] = 
     Left $ "tyApp: " ++ show tyOp ++ ": TyOpVar applied to zero args."
-tyApp tyOp@TyOpVar{} args = Right $ TyAppIn tyOp args
+tyApp tyOp@TyOpVarIn{} args = Right $ TyAppIn tyOp args
 tyApp tyOp args =
     let (_, arity) = destTypeOp tyOp in
       if arity == length args 
@@ -403,9 +440,13 @@ tyApp tyOp args =
 
 -- | Returns the list of all type operator variables in a type.
 typeOpVars :: HOLType -> [TypeOp]
-typeOpVars (TyAppIn op@TyOpVar{} args) = foldr (union . typeOpVars) [op] args
-typeOpVars (UTypeIn _ tbody) = typeOpVars tbody
-typeOpVars _ = []
+typeOpVars (TyAppIn op@TyOpVarIn{} args) = 
+    foldr (union . typeOpVars) [op] args
+typeOpVars (TyAppIn _ args) =
+    concatMap typeOpVars args
+typeOpVars (UTypeIn _ tbody) = 
+    typeOpVars tbody
+typeOpVars TyVarIn{} = []
 
 -- | Returns the list of all type operator variables in a list of types.
 catTypeOpVars :: [HOLType] -> [TypeOp]
@@ -416,40 +457,39 @@ catTypeOpVars = foldr (union . typeOpVars) []
 typeOpSubst :: [(TypeOp, TypeOp)] -> HOLType -> HOLType
 typeOpSubst [] t = t
 typeOpSubst tyopenv t =
-    tyOpSubstRec (filter validSubst tyopenv) t
-  where tyOpSubstRec :: [(TypeOp, TypeOp)] -> HOLType -> HOLType
+    fromRight $ tyOpSubstRec (filter validSubst tyopenv) t
+  where tyOpSubstRec :: [(TypeOp, TypeOp)] -> HOLType -> Either String HOLType
         tyOpSubstRec tyopins (TyAppIn op args) =
-            let args' = map (tyOpSubstRec tyopins) args in
-              case tryFind (\ (tp, tr) ->
-                                if tp /= op ||
-                                snd (destTypeOp tr) /= length args 
-                                then Nothing
-                                else Just tr) tyopins of
-                Nothing -> TyAppIn op args'
-                Just op' -> TyAppIn op' args'
+            do args' <- mapM (tyOpSubstRec tyopins) args
+               case tryFind (\ (tp, tr) ->
+                              if tp /= op || snd (destTypeOp tr) /= length args 
+                              then Nothing
+                              else Just tr) tyopins of
+                 Nothing -> tyApp op args'
+                 Just op' -> tyApp op' args'
         tyOpSubstRec tyopins (UTypeIn tv tbody) =
-            UTypeIn tv $ tyOpSubstRec tyopins tbody
-        tyOpSubstRec _ ty = ty
+            mkUType tv =<< tyOpSubstRec tyopins tbody
+        tyOpSubstRec _ ty@TyVarIn{} = Right ty
 
 -- instantiation of type operator variables with universal types.
 typeOpInst :: [(TypeOp, HOLType)] -> HOLType -> HOLType
 typeOpInst [] t = t
-typeOpInst tyopenv t = tyOpInstRec (filter validSubst tyopenv) t
+typeOpInst tyopenv t = fromRight $ tyOpInstRec (filter validSubst tyopenv) t
   where arityOf :: HOLType -> Maybe Int
         arityOf ty = return (length . fst) <*> destUTypes ty      
 
-        tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> HOLType
+        tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> Either String HOLType
         tyOpInstRec tyopins ty@(TyAppIn op args) =
-            let args' = map (tyOpInstRec tyopins) args in
-              case tryFind (\ (tp, tr) ->
-                                if tp /= op || 
-                                   arityOf tr /= (Just $ length args) 
-                                then Nothing
-                                else destUTypes tr) tyopins of
-                Nothing -> TyAppIn op args'
-                Just (rtvs, rtbody)
-                    | isSmall rtbody -> typeSubst (zip rtvs args') rtbody
-                    | otherwise -> ty
+            do args' <- mapM (tyOpInstRec tyopins) args
+               case tryFind (\ (tp, tr) ->
+                              if tp /= op || arityOf tr /= (Just $ length args) 
+                              then Nothing
+                              else destUTypes tr) tyopins of
+                 Nothing -> tyApp op args'
+                 Just (rtvs, rtbody)
+                     | isSmall rtbody ->
+                         return $ typeSubst (zip rtvs args') rtbody
+                     | otherwise -> return ty
         tyOpInstRec tyopins (UTypeIn tv tbody) =
             if any (\ (x, ty) -> tv `elem` tyVars ty && 
                                  x `elem` typeOpVars tbody) tyopins
@@ -458,12 +498,11 @@ typeOpInst tyopenv t = tyOpInstRec (filter validSubst tyopenv) t
                      tvpatts = map fst tyopins
                      tvrepls = catTyVars . mapMaybe (`lookup` tyopins) $
                                  intersect tvbs tvpatts
-                     tv' = variantTyVar tvrepls tv in
-                   UTypeIn tv' . tyOpInstRec tyopins $ 
-                     typeSubst [(tv, tv')] tbody
-            else UTypeIn tv $ tyOpInstRec tyopins tbody
-        tyOpInstRec _ ty = ty
-                  
+                     tv' = variantTyVar tvrepls tv
+                     tbody' = typeSubst [(tv, tv')] tbody in
+                   mkUType tv' =<< tyOpInstRec tyopins tbody'
+            else mkUType tv =<< tyOpInstRec tyopins tbody
+        tyOpInstRec _ ty@TyVarIn{} = Right ty                  
                 
 {- 
    HOL2P Type Primitives
@@ -489,14 +528,15 @@ isSmall UTypeIn{} = False
   'Left' if the bound type is not a small, type variable.
 -}
 mkUType :: HOLType -> HOLType -> Either String HOLType
-mkUType tv@(TyVarIn True _) tybody = Right $ UTypeIn tv tybody
+mkUType tv@(TyVarIn True _) tybody = 
+    Right $ UTypeIn tv tybody
 mkUType _ _ = Left "mkUType"
 
 {-|
   Constructs a compound universal type given a list of bound types and a body.    Fails with 'Left' if any internal call to 'mkUType' fails.
 -}
 mkUTypes :: [HOLType] -> HOLType -> Either String HOLType
-mkUTypes = flip (foldrM mkUType)
+mkUTypes vs b = foldrM mkUType b vs <?> "mkUTypes"
 
 {-|
   Constructs a compound universal type from a type operator variable and a given
@@ -512,10 +552,12 @@ mkUTypes = flip (foldrM mkUType)
   * The type operator argument is not a variable. 
 -}
 uTypeFromTypeOpVar :: TypeOp -> Int -> Either String HOLType
-uTypeFromTypeOpVar s@TyOpVar{} n
+uTypeFromTypeOpVar s@TyOpVarIn{} n
     | n > 0 = 
-        let tvs = map (\ x -> TyVarIn True $ 'A' : show x) [1 .. n] in
-          mkUTypes tvs =<< tyApp s tvs
+        let tvs = map (\ x -> TyVarIn True . pack $ 'A' : show x) 
+                    [1 .. n] in
+          do ty <- tyApp s tvs
+             mkUTypes tvs ty
     | otherwise = 
         Left "uTypeFromTypeOpVar: must have a positive number of bound types."
 uTypeFromTypeOpVar _ _ = 
@@ -527,8 +569,10 @@ uTypeFromTypeOpVar _ _ =
   any universal types.
 -}
 mkSmall :: HOLType -> Either String HOLType
-mkSmall (TyVarIn _ s) = Right $ TyVarIn True s
-mkSmall (TyAppIn s tvs) = liftM (TyAppIn s) $ mapM mkSmall tvs
+mkSmall (TyVarIn _ s) = 
+    Right $ TyVarIn True s
+mkSmall (TyAppIn op tvs) = 
+    liftM (TyAppIn op) $ mapM mkSmall tvs
 mkSmall UTypeIn{} = Left "mkSmall"
 
 {-| 
@@ -545,9 +589,12 @@ destUType _ = Nothing
   quantified.
 -} 
 destUTypes :: HOLType -> Maybe ([HOLType], HOLType)
-destUTypes (UTypeIn tv tb) = Just $ destUTypesRec ([tv], tb)
+destUTypes (UTypeIn tv tb) = 
+    let (tvs, tb') = destUTypesRec ([tv], tb) in
+      Just (tvs, tb')
   where destUTypesRec :: ([HOLType], HOLType) -> ([HOLType], HOLType)
-        destUTypesRec (acc, UTypeIn tv' tb') = destUTypesRec (acc++[tv'], tb')
+        destUTypesRec (acc, UTypeIn tv' tb') = 
+            destUTypesRec (acc++[tv'], tb')
         destUTypesRec res = res
 destUTypes _ = Nothing
 
@@ -564,7 +611,8 @@ containsUType UTypeIn{} = True
 -}
 variantTyVar :: [HOLType] -> HOLType -> HOLType
 variantTyVar avoid tv@(TyVarIn small name)
-    | tv `elem` avoid = variantTyVar avoid . TyVarIn small $ name ++ "'"
+    | tv `elem` avoid = 
+          variantTyVar avoid (TyVarIn small $ name `snoc` '\'')
     | otherwise = tv
 variantTyVar _ ty = ty
 
@@ -584,16 +632,13 @@ variantTyVars avoid (tv:tvs) =
 -- Documentation copied from HaskHOL.Core.Prims
 
 {-$ViewPatterns
-  The primitive data types of HaskHOL are implemented using view patterns in
+  The primitive data types of HaskHOL are implemented using pattern synonyms in
   order to simulate private data types:
 
   * Internal constructors are hidden to prevent manual construction of terms.
 
-  * View constructors (those of 'HOLTypeView', 'HOLTermView', 'HOLThmView') are
-    exposed to enable pattern matching. 
-
-  * View patterns, as defined by instances of the 'view' function from the 
-    @Viewable@ class, provide a conversion between the two sets of constructors.
+  * Unidirectional pattern synonyms ('TyVar', etc.) are exposed to enable 
+    pattern matching. 
 -}
 
 {-$HOLTypes
@@ -607,7 +652,7 @@ variantTyVars avoid (tv:tvs) =
   There are two principle changes to Harrison's implementation:
 
   1.  Type operators have been introduced, via the 'TypeOp' data type, to 
-      facilitate a stateless logical kernel following from Freek Wiedijk's 
+      facilitate a semi-stateless logical kernel following from Freek Wiedijk's 
       Stateless HOL system.
 
   2.  Universal types and type operator variables have been introduced to move

@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveDataTypeable, FlexibleInstances, MultiParamTypeClasses, 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, PatternSynonyms, 
              TemplateHaskell #-}
 
 {-|
@@ -28,35 +29,45 @@
 module HaskHOL.Core.Kernel.Prims
     ( -- * HOL types
       HOLType(..)
-    , HOLTypeView(..)
+    , pattern TyVar
+    , pattern TyApp
+    , pattern UType
     , TypeOp(..)
+    , pattern TyOpVar
+    , pattern TyPrimitive
+    , pattern TyDefined
     , HOLTypeEnv
     , SubstTrip
       -- * HOL terms
     , HOLTerm(..)
-    , HOLTermView(..)
+    , pattern Var
+    , pattern Const
+    , pattern Comb
+    , pattern Abs
+    , pattern TyComb
+    , pattern TyAbs
     , ConstTag(..)
+    , pattern Primitive
+    , pattern Defined
+    , pattern MkAbstract
+    , pattern DestAbstract
     , HOLTermEnv
       -- * HOL theorems
     , HOLThm(..)
-    , HOLThmView(..)
-      -- * The View pattern class
-    , Viewable(..)
+    , pattern Thm
     ) where
 
 import HaskHOL.Core.Lib
 
+import Data.Hashable
+import GHC.Generics
+
+import Language.Haskell.TH.Lift
+
 {-
   A quick note on how the primitive data types of HaskHOL are implemented -- 
-  view patterns are used to simulate private data types for HOL types and 
-  terms:
-  * Internal constructors are hidden to prevent manual construction of terms.
- 
-  * View constructors (those of 'HOLTypeView', 'HOLTermView', and 'HOLThmView')
-    are exposed to enable pattern matching. 
- 
-  * View patterns, as defined by instances of the 'view' function from the 
-    @Viewable@ class, provide a conversion between the two sets of constructors.
+  unidirectional pattern synonyms are used to simulate private data types for 
+  HOL types, terms, and theorems.
 -}
 
 {-
@@ -69,52 +80,62 @@ import HaskHOL.Core.Lib
 
   There are two principle changes to Harrison's implementation:
   1.  Type operators have been introduced, via the 'TypeOp' data type, to 
-      facilitate a stateless logical kernel following from Freek Wiedijk's 
+      facilitate a semi-stateless logical kernel following from Freek Wiedijk's 
       Stateless HOL system.
 
   2.  Universal types and type operator variables have been introduced to move
       the logic from simply typed to polymorphic following from Norbert 
       Voelker's HOL2P system.
 -}
-
 {-|
   The 'HOLType' data type defines the internal constructors for HOL types in
-  HaskHOL.  For more details, see the documentation for its view pattern data
-  type, 'HOLTypeView'.
+  HaskHOL.
 -}
-data HOLType
-    = TyVarIn !Bool !String
-    | TyAppIn !TypeOp ![HOLType]
+data HOLType 
+    = TyVarIn !Bool    !Text
+    | TyAppIn !TypeOp  ![HOLType]
     | UTypeIn !HOLType !HOLType
-    deriving (Eq, Ord, Typeable) 
+    deriving (Eq, Ord, Typeable, Generic)
 
--- | The view pattern data type for HOL types.
-data HOLTypeView
-    -- | A type variable consisting of a constraint flag and name.
-    = TyVar Bool String
-    {-| 
-      A type application consisting of a type operator and a list of type
-      arguments.  See 'TypeOp' for more details.
-    -}
-    | TyApp TypeOp [HOLType]
-    {-| 
-      A universal type consisting of a bound type and a body type.  Note that 
-      the bound type must be a small, type variable.
-    -}
-    | UType HOLType HOLType
+instance Hashable HOLType
+
+-- | A type variable consisting of a constraint flag and name.
+pattern TyVar b s <- TyVarIn b s
+    
+{-| 
+  A type application consisting of a type operator and a list of type
+  arguments.  See 'TypeOp' for more details.
+-}
+pattern TyApp op tys <- TyAppIn op tys
+{-| 
+  A universal type consisting of a bound type and a body type.  Note that 
+  the bound type must be a small, type variable.
+-}
+pattern UType tv bod <- UTypeIn tv bod
 
 {-|
   The data type for type operators, 'TypeOp', is a mashing together of the
   representation of type operators from both both HOL2P and Stateless HOL.
   For more information regarding construction of the different operators, see
-  the documentation of the following functions: 'mkTypeOpVar', 'newPrimTypeOp',
-  'newDefinedTypeOp'
+  the documentation of the following functions: 'mkTypeOpVar', 
+  'newPrimitiveTypeOp', and 'newDefinedTypeOp'
 -}
 data TypeOp 
-    = TyOpVar !String
-    | TyPrim !String !Int
-    | TyDefined !String !Int !HOLThm
-    deriving (Eq, Ord, Typeable)
+    = TyOpVarIn     !Text
+    | TyPrimitiveIn !Text !Int
+    | TyDefinedIn   !Text !Int !Int -- Hash of concl of thm
+    deriving (Eq, Ord, Typeable, Generic)
+
+instance Hashable TypeOp
+
+-- | A type operator variable consisting of a name.
+pattern TyOpVar s <- TyOpVarIn s
+
+-- | A type operator primitive consisting of a name and arity.
+pattern TyPrimitive s n <- TyPrimitiveIn s n
+
+-- | A defined type operator consisting of a name and arity.
+pattern TyDefined s n <- TyDefinedIn s n _
 
 {-
   In order to keep HaskHOL's type system decidable, we follow the same 
@@ -152,16 +173,10 @@ type HOLTypeEnv = [(HOLType, HOLType)]
 -}
 type SubstTrip = (HOLTypeEnv, [(TypeOp, HOLType)], [(TypeOp, TypeOp)])
 
--- Viewable and Show instances for HOLType
-instance Viewable HOLType HOLTypeView where
-    view (TyVarIn b s) = TyVar b s
-    view (TyAppIn tyop tys) = TyApp tyop tys
-    view (UTypeIn v b) = UType v b
-
 instance Show TypeOp where
-    show (TyOpVar s) = '_' : s
-    show (TyPrim s _) = s
-    show (TyDefined s _ _) = s
+    show (TyOpVarIn s) = '_' : show s
+    show (TyPrimitiveIn s _) = show s
+    show (TyDefinedIn s _ _) = show s
 
 {-
   The following data types combined provide the definition of HOL terms in 
@@ -185,69 +200,85 @@ instance Show TypeOp where
   type, 'HOLTermView'.
 -}
 data HOLTerm
-    = VarIn !String !HOLType
-    | ConstIn !String !HOLType !ConstTag
-    | CombIn !HOLTerm !HOLTerm
-    | AbsIn !HOLTerm !HOLTerm
-    | TyCombIn !HOLTerm !HOLType
-    | TyAbsIn !HOLType !HOLTerm
-    deriving (Eq, Ord, Typeable)
+    = VarIn    !Text     !HOLType
+    | ConstIn  !Text     !HOLType !ConstTag 
+    | CombIn   !HOLTerm  !HOLTerm
+    | AbsIn    !HOLTerm  !HOLTerm
+    | TyCombIn !HOLTerm  !HOLType
+    | TyAbsIn  !HOLType  !HOLTerm
+    deriving (Eq, Ord, Typeable, Generic)
 
--- | The view pattern data type for HOL terms.
-data HOLTermView
-    -- | A term variable consisting of a name and type.
-    = Var String HOLType
-    {-| 
-      A term constant consisting of a name, type, and tag.  See 'ConstTag' for 
-      more information.
-    -}
-    | Const String HOLType ConstTag
-    -- | A term application consisting of a function term and argument term.
-    | Comb HOLTerm HOLTerm
-    {-| 
-      A term abstraction consisting of a bound term and a body term.  Note that
-      the bound term must be a type variable.
-    -}
-    | Abs HOLTerm HOLTerm
-    {-| 
-      A term-level, type application consisting of a body term and an argument 
-      type. Note that the body term must have a universal type.
-    -}
-    | TyComb HOLTerm HOLType
-    {-| 
-      A term-level, type abstraction consisting of a bound type and a body term.
-      Note that the bound type must be a small, type variable.
-    -}
-    | TyAbs HOLType HOLTerm
+instance Hashable HOLTerm
+
+-- | A term variable consisting of a name and type.
+pattern Var s ty <- VarIn s ty 
+
+{-| 
+  A term constant consisting of a name, type, and tag.  See 'ConstTag' for 
+  more information.
+-}
+pattern Const s ty <- ConstIn s ty _
+
+-- | A term application consisting of a function term and argument term.
+pattern Comb l r <- CombIn l r
+    
+{-| 
+  A term abstraction consisting of a bound term and a body term.  Note that
+  the bound term must be a type variable.
+-}
+pattern Abs bv bod <- AbsIn bv bod
+
+{-| 
+  A term-level, type application consisting of a body term and an argument 
+  type. Note that the body term must have a universal type.
+-}
+pattern TyComb tm ty <- TyCombIn tm ty
+    
+{-| 
+  A term-level, type abstraction consisting of a bound type and a body term.
+  Note that the bound type must be a small, type variable.
+-}
+pattern TyAbs ty tm <- TyAbsIn ty tm
    
 {-| 
   The data type for constant tags, 'ConstTag', follows identically from the
   implementation in Stateless HOL.  For more information regarding construction
   of the different tags, see the documentation of the following functions:
-  'newPrimConst', 'newDefinedConst', and 'newDefinedTypeOp'.
+  'newPrimitiveConst', 'newDefinedConst', and 'newDefinedTypeOp'.
 -}
 data ConstTag
-    = Prim
-    | Defined !HOLTerm
-    | MkAbstract !String !Int !HOLThm
-    | DestAbstract !String !Int !HOLThm
-    deriving (Eq, Ord, Typeable)
+    = PrimitiveIn
+    | DefinedIn      !Int            -- hash
+    | MkAbstractIn   !Text !Int !Int -- name, arity, hash
+    | DestAbstractIn !Text !Int !Int -- name, arity, hash
+    deriving (Eq, Ord, Typeable, Generic)
+
+instance Hashable ConstTag
+
+-- | A primitive constant tag.
+pattern Primitive <- PrimitiveIn
+
+-- | A defined constant tag.
+pattern Defined <- DefinedIn _
+
+{-| A defined constant tag for type construction consisting of a name and 
+    arity.
+-}
+pattern MkAbstract s n <- MkAbstractIn s n _
+
+{-| A defined constant tag for type destruction consisting of a name and 
+    arity.
+-}
+pattern DestAbstract s n <- DestAbstractIn s n _
+
+instance Show ConstTag where
+    show PrimitiveIn = "Prim"
+    show (DefinedIn _) = "Defined"
+    show (MkAbstractIn s _ _) = "Mk__" ++ show s
+    show (DestAbstractIn s _ _) = "Dest__" ++ show s
 
 -- | Type synonym for the commonly used, list-based, term environment.
 type HOLTermEnv = [(HOLTerm, HOLTerm)]
-
-{- 
-  The Viewable instance for terms.  
-  Note that the Show instance for terms is more complicated than for types and, 
-  as such, is included separately in the HaskHOL.Core.Printer module.
--}
-instance Viewable HOLTerm HOLTermView where
-    view (VarIn s ty) = Var s ty
-    view (ConstIn s ty tag) = Const s ty tag
-    view (CombIn l r) = Comb l r
-    view (AbsIn v bod) = Abs v bod
-    view (TyAbsIn tv tb) = TyAbs tv tb
-    view (TyCombIn tm ty) = TyComb tm ty
 
 {-| 
   The 'HOLThm' data type defines HOL Theorems in HaskHOL.  A theorem is defined
@@ -258,30 +289,12 @@ instance Viewable HOLTerm HOLTermView where
   Axioms can be tracked once the stateful layer of the prover is introduced,
   though.  For more details see the documentation for `newAxiom`.
 -}
-data HOLThm = ThmIn ![HOLTerm] !HOLTerm
-  deriving (Eq, Ord, Typeable)
+data HOLThm = ThmIn ![HOLTerm] !HOLTerm deriving (Eq, Ord, Typeable, Generic)
+        
+instance Hashable HOLThm
 
--- | The view pattern data type for HOL theorems.
-data HOLThmView = Thm [HOLTerm] HOLTerm
-
-instance Viewable HOLThm HOLThmView where
-  view (ThmIn asl c) = Thm asl c
-
-{-| 
-  The @Viewable@ class is used to provide a polymorphic view pattern for
-  HaskHOL's primitive data types.
--}
-class Viewable a b where
-    {-| 
-      The view pattern function for HaskHOL's primitive data types:
-      
-      * For types - Converts from 'HOLType' to 'HOLTypeView'.
-      
-      * For terms - Converts from 'HOLTerm' to 'HOLTermView'.
-
-      * For theorems - Converts from 'HOLThm' to 'HOLThmView'.
-    -}
-    view :: a -> b
+-- | The pattern synonym for HOL theorems.
+pattern Thm as c <- ThmIn as c
 
 {- 
   Deepseq instances for the primitive data types.  These are included as they 
@@ -293,32 +306,35 @@ instance NFData HOLType where
     rnf (UTypeIn tv tb) = rnf tv `seq` rnf tb
 
 instance NFData TypeOp where
-    rnf (TyOpVar s) = rnf s
-    rnf (TyPrim s n) = rnf s `seq` rnf n
-    rnf (TyDefined s n thm) = rnf s `seq` rnf n `seq` rnf thm
+    rnf (TyOpVarIn s) = rnf s
+    rnf (TyPrimitiveIn s n) = rnf s `seq` rnf n
+    rnf (TyDefinedIn s n h) = rnf s `seq` rnf n `seq` rnf h
 
 instance NFData HOLTerm where
     rnf (VarIn s ty) = rnf s `seq` rnf ty
-    rnf (ConstIn s ty d) = rnf s `seq` rnf ty `seq` rnf d
+    rnf (ConstIn s ty tag) = rnf s `seq` rnf ty `seq` rnf tag
     rnf (CombIn l r) = rnf l `seq` rnf r
     rnf (AbsIn bv bod) = rnf bv `seq` rnf bod
     rnf (TyAbsIn bty bod) = rnf bty `seq` rnf bod
     rnf (TyCombIn tm ty) = rnf tm `seq` rnf ty
 
 instance NFData ConstTag where
-    rnf Prim = ()
-    rnf (Defined tm) = rnf tm
-    rnf (MkAbstract s i thm) = rnf s `seq` rnf i `seq` rnf thm
-    rnf (DestAbstract s i thm) = rnf s `seq` rnf i `seq` rnf thm
+    rnf PrimitiveIn = ()
+    rnf (DefinedIn h) = rnf h
+    rnf (MkAbstractIn s i h) = rnf s `seq` rnf i `seq` rnf h
+    rnf (DestAbstractIn s i h) = rnf s `seq` rnf i `seq` rnf h
 
 instance NFData HOLThm where
     rnf (ThmIn asl c) = rnf asl `seq` rnf c
 
-{- 
-  These are the automatically derived Lift instances for the primitive data
-  types.  These instances are used by the compile-time operations found in
-  the HaskHOL.Core.Protected module.
--}
-$(deriveLiftMany [ ''TypeOp, ''HOLType
-                 , ''ConstTag, ''HOLTerm
-                 , ''HOLThm])
+deriveSafeCopy 0 'base ''TypeOp
+deriveSafeCopy 0 'base ''HOLType
+deriveSafeCopy 0 'base ''ConstTag
+deriveSafeCopy 0 'base ''HOLTerm
+deriveSafeCopy 0 'base ''HOLThm
+
+instance Lift Text where
+  lift t = [| pack $(lift $ unpack t) |]
+
+deriveLiftMany [''TypeOp, ''HOLType, ''ConstTag, ''HOLTerm, ''HOLThm]
+

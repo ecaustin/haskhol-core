@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 {-|
   Module:    HaskHOL.Core.Basics.Nets
   Copyright: (c) The University of Kansas 2013
@@ -19,17 +17,16 @@
 -}
 module HaskHOL.Core.Basics.Nets
        ( Net
-       , netEmpty  -- :: Net a
-       , netEnter  -- :: Ord a => [HOLTerm] -> (HOLTerm, a) -> Net a -> 
-                   --             HOL cls thry (Net a)
-       , netLookup -- :: HOLTerm -> Net a -> [a]
-       , netMerge  -- :: Ord a => Net a -> Net a -> Net a
+       , netEmpty
+       , netMap
+       , netEnter
+       , netLookup
+       , netMerge
        ) where
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
-import {-# SOURCE #-} HaskHOL.Core.Basics (genVar, stripComb)
+import {-# SOURCE #-} HaskHOL.Core.Basics (unsafeGenVar, stripComb)
 
 -- ordered, unique insertion for sets as lists
 setInsert :: Ord a => a -> [a] -> [a]
@@ -54,13 +51,15 @@ setMerge l1@(h1:t1) l2@(h2:t2)
 -- The data type that defines a label for each node in a term net.
 data TermLabel 
      = VNet             -- variables
-     | LCNet String Int -- local constants
-     | CNet String Int  -- constants
+     | LCNet Text Int -- local constants
+     | CNet Text Int  -- constants
      | LNet Int         -- term abstraction
      | LTyAbs           -- type abstraction
      | LTyComb          -- type combination
-     deriving (Eq, Show)
-       
+     deriving (Eq, Ord, Show, Typeable)
+
+deriveSafeCopy 0 'base ''TermLabel
+
 {-|
   Internally, 'Net's are represented with a tree structure; each node has a list
   of labeled branches and a list of values.  The node labels are generated via
@@ -81,49 +80,68 @@ data TermLabel
     of the form @x \`op\` x@ will match any term of the form @a \`op\` b@ 
     regardless of the values of @a@ and @b@.
 -}
-data Net a = NetNode [(TermLabel, Net a)] [a] deriving Show
+data Net a = NetNode !(Map TermLabel (Net a)) [a] deriving (Show, Typeable)
+
+--EvNote: GHC7.10 broke auto-deriving for SafeCopy
+deriveSafeCopy 0 'base ''Net
+{-
+instance SafeCopy a => SafeCopy (Net a) where
+    putCopy (NetNode m xs) = contain $ do p1 <- getSafePut
+                                          p2 <- getSafePut
+                                          p1 m
+                                          p2 xs
+                                          return ()
+    getCopy = contain $ do g1 <- getSafeGet
+                           g2 <- getSafeGet
+                           return NetNode <*> g1 <*> g2
+    version = 0
+    kind = base
+-}
 
 -- | The empty 'Net'.
 netEmpty :: Net a
-netEmpty = NetNode [] []
+netEmpty = NetNode mapEmpty []
+
+-- | A version of 'map' for Nets.
+netMap :: (a -> b) -> Net a -> Net b
+netMap f (NetNode xs ys) =
+    NetNode (mapMap (netMap f) xs) $ map f ys
 
 {-
   Generates a net node label given a pattern term.  Differs from labelToLookup
   in that it accepts a list of variables to treat as local constants when
   generating the label.
 -}
-labelToStore :: [HOLTerm] -> HOLTerm -> HOL cls thry (TermLabel, [HOLTerm])
+labelToStore :: [HOLTerm] -> HOLTerm -> (TermLabel, [HOLTerm])
 labelToStore lconsts tm = 
     let (op, args) = stripComb tm in
-      case view op of
-        (Const x _ _) -> return (CNet x (length args), args)
+      case op of
+        (Const x _) -> (CNet x (length args), args)
         (Abs bv bod) -> 
-            do bod' <- if bv `elem` lconsts
-                       then do v <- genVar $ typeOf bv
-                               return $! varSubst [(bv, v)] bod
-                       else return bod
-               return (LNet (length args), bod':args)
-        (TyAbs _ t) -> return (LTyAbs, [t])
-        (TyComb t _) -> return (LTyComb, [t])
-        (Var x _) -> return $! if op `elem` lconsts
-                               then (LCNet x (length args), args)
-                               else (VNet, [])
+            let bod' = if bv `elem` lconsts
+                       then let v = unsafeGenVar $ typeOf bv in
+                              fromJust $ varSubst [(bv, v)] bod
+                       else bod in
+              (LNet (length args), bod':args)
+        (TyAbs _ t) -> (LTyAbs, [t])
+        (TyComb t _) -> (LTyComb, [t])
+        (Var x _) -> if op `elem` lconsts
+                     then (LCNet x (length args), args)
+                     else (VNet, [])
         _ -> error "labelToStore: stripComb broken"
 
 {- 
   Used by enter in order to update a net.  Recursively generates node labels for
   the provided pattern using labelToStore.
 -}
-netUpdate :: Ord a => [HOLTerm] -> (a, [HOLTerm], Net a) -> HOL cls thry (Net a)
+netUpdate :: Ord a => [HOLTerm] -> (a, [HOLTerm], Net a) -> Net a
 netUpdate _ (b, [], NetNode edges tips) = 
-    return . NetNode edges $ setInsert b tips
+    NetNode edges $ setInsert b tips
 netUpdate lconsts (b, tm:rtms, NetNode edges tips) =
-    do (label, ntms) <- labelToStore lconsts tm
-       let (child, others) = case remove (\ (x, _) -> x == label) edges of
-                               Just edges' -> (snd `ffComb` id) edges'
-                               Nothing -> (netEmpty, edges)
-       newChild <- netUpdate lconsts (b, ntms++rtms, child)
-       return $! NetNode ((label, newChild):others) tips
+    let (label, ntms) = labelToStore lconsts tm
+        (child, others) = fromMaybe (netEmpty, edges) $ mapRemove label edges
+        newChild = netUpdate lconsts (b, ntms++rtms, child) in
+      NetNode (mapInsert label newChild others) tips
 
 {-| 
   Inserts a new element, paired with a pattern term, into a provided net.  The 
@@ -133,7 +151,7 @@ netUpdate lconsts (b, tm:rtms, NetNode edges tips) =
 
   Never fails.
 -}
-netEnter :: Ord a => [HOLTerm] -> (HOLTerm, a) -> Net a -> HOL cls thry (Net a)
+netEnter :: Ord a => [HOLTerm] -> (HOLTerm, a) -> Net a -> Net a
 netEnter lconsts (tm, b) net = netUpdate lconsts (b, [tm], net)
 
 {-
@@ -143,8 +161,8 @@ netEnter lconsts (tm, b) net = netUpdate lconsts (b, [tm], net)
 labelForLookup :: HOLTerm -> (TermLabel, [HOLTerm])
 labelForLookup tm =
     let (op, args) = stripComb tm in
-      case view op of
-        (Const x _ _ ) -> (CNet x (length args), args)
+      case op of
+        (Const x _) -> (CNet x (length args), args)
         (Abs _ bod) -> (LNet (length args), bod:args)
         (TyAbs _ t) -> (LTyAbs, [t])
         (TyComb t _) -> (LTyComb, [t])
@@ -160,11 +178,11 @@ follow :: ([HOLTerm], Net a) -> [a]
 follow ([], NetNode _ tips) = tips
 follow (tm:rtms, NetNode edges _) = 
     let (label, ntms) = labelForLookup tm
-        collection = case lookup label edges of
+        collection = case mapLookup label edges of
                        Just child -> follow (ntms++rtms, child)
                        Nothing -> [] in
       if label == VNet then collection
-      else case lookup VNet edges of
+      else case mapLookup VNet edges of
              Just vn -> collection ++ follow (rtms, vn)
              Nothing -> collection
 
@@ -183,14 +201,12 @@ netLookup tm net = follow ([tm], net)
 -}
 netMerge :: Ord a => Net a -> Net a -> Net a
 netMerge (NetNode l1 data1) (NetNode l2 data2) =
-    NetNode (foldr addNode (foldr addNode [] l1) l2) $ setMerge data1 data2
-  where addNode :: Ord a => (TermLabel, Net a) -> [(TermLabel, Net a)] ->
-                            [(TermLabel, Net a)]
-        addNode p@(lab, net) l =
-            case remove (\ (x, _) -> x == lab) l of
-              Just ((lab', net'), rest) ->
-                  (lab', netMerge net net'):rest
-              Nothing -> p:l
-                
--- Lift derivations
-deriveLiftMany [''TermLabel, ''Net]
+    NetNode (mapFoldrWithKey addNode (mapFoldrWithKey addNode mapEmpty l1) l2) $
+      setMerge data1 data2
+  where addNode :: Ord a => TermLabel -> Net a -> Map TermLabel (Net a) ->
+                            Map TermLabel (Net a)
+        addNode lab net l =
+            case mapRemove lab l of
+              Just (net', rest) ->
+                  mapInsert lab (netMerge net net') rest
+              Nothing -> mapInsert lab net l
