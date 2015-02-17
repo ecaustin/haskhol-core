@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-|
   Module:    HaskHOL.Core.Kernel
   Copyright: (c) The University of Kansas 2013

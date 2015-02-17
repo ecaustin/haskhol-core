@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-|
   Module:    HaskHOL.Core.Basics.Nets
   Copyright: (c) The University of Kansas 2013

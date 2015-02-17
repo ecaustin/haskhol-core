@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, OverloadedStrings, 
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, PatternSynonyms, 
              TypeFamilies #-}
 
 {-|

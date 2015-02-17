@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses, PatternSynonyms #-}
 
 {-|
   Module:    HaskHOL.Core.Kernel.Terms

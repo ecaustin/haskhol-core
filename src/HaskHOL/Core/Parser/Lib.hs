@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts, PatternSynonyms, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.Parser.Lib
   Copyright: (c) The University of Kansas 2013

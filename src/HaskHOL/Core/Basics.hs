@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE PatternSynonyms, ScopedTypeVariables #-}
 
 {-|
   Module:    HaskHOL.Core.Basics

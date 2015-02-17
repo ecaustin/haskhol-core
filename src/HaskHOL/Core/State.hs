@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies #-}
+{-# LANGUAGE PatternSynonyms, TypeFamilies #-}
 
 {-|
   Module:    HaskHOL.Core.State
