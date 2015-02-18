@@ -139,7 +139,7 @@ pas tm =
         return $! PAs tm ty) <|> return tm
 
 patomic :: MyParser thry PreTerm
-patomic = 
+patomic =
     myparens ((do myreservedOp ":"
                   ty <- ptype
                   return $! PAs (PVar "UNIV" dpty) 
@@ -187,8 +187,8 @@ patomic =
                   if x `notElem` prefixes ctxt &&
                      x `notElem` map fst (infixes ctxt) &&
                      x `notElem` binders ctxt
-                     then return $! PVar x dpty
-                     else fail "patomic")
+                  then return $! PVar x dpty
+                  else fail "patomic")
 
 pclauses :: MyParser thry PreTerm
 pclauses =

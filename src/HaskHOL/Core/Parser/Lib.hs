@@ -437,7 +437,7 @@ langDef = LanguageDef
     , opStart = oneOf ",:!#$%&*+./<=>?@\\^|-~"
     , opLetter = oneOf ":!#$%&*+./<=>?@\\^|-~"
     , reservedNames = [ "TYINST", "let", "and", "in", "if", "then", "else"
-                      , "match", "when", "function" ]
+                      , "match", "with", "when", "function" ]
     , reservedOpNames = ["(", ")", "[", "]", "{", "}"
                         , "%", "_", "'", "->", ".", ":", ";", "|"]
     , caseSensitive = True
