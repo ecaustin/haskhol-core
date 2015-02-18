@@ -145,8 +145,17 @@ ppTerm ctxt = render . ppTermRec 0
                                 ty0 = typeOf hop
                                 s = reverseInterface s0 ty0 
                                 ss = unpack s in
+-- Match terms
+                       if s == "_MATCH" && length args == 2 && 
+    --ugly hack just to get this to fall through cleanly   
+                          isJust (destClauses $ args !! 1)
+                       then let (m:cs:_) = args
+                                base = text "match" <+> ppTermRec 0 m <+>
+                                       text "with" <+> 
+                                       ppClauses (fromJust $ destClauses cs) in
+                              if prec == 0 then base else parens base
 -- Conditional case
-                       if s == "COND" && length args == 3
+                       else if s == "COND" && length args == 3
                        then let (c:t:e:_) = args
                                 base = text "if" <+> ppTermRec 0 c <+> 
                                        text "then" <+> ppTermRec 0 t <+> 
@@ -295,6 +304,49 @@ ppTerm ctxt = render . ppTermRec 0
                             find (\ (_, (s', ty)) -> s' == s0 && 
                                   isJust (typeMatch ty ty0 ([], [], []))) $
                               getInterfaceCtxt ctxt
+
+        destClauses :: HOLTerm -> Maybe [[HOLTerm]]
+        destClauses tm =
+            let (s, args) = stripComb tm in
+              if nameOf s == "_SEQPATTERN" && length args == 2
+              then do c <- destClause (head args)
+                      cs <- destClauses (args !! 1)
+                      return (c:cs)
+              else do c <- destClause tm
+                      return [c]
+          where destClause :: HOLTerm -> Maybe [HOLTerm]
+                destClause tm' =
+                    do (_, pbod) <- liftM stripExists $ body =<< body tm'
+                       let (s, args) = stripComb pbod
+                       if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
+                          then do tm'1 <- rand =<< rator (head args)
+                                  tm'2 <- rand =<< rator (args !! 1)
+                                  return [tm'1, tm'2]
+                          else if nameOf s == "_GUARDED_PATTERN" && 
+                                  length args == 3
+                               then do tm'1 <- rand =<< rator (head args)
+                                       let tm'2 = head $ tail args
+                                       tm'3 <- rand =<< rator (args !! 2)
+                                       return [tm'1, tm'2, tm'3]
+                               else Nothing
+
+        ppClauses :: [[HOLTerm]] -> Doc
+        ppClauses [c] = printClause c
+        ppClauses (c:cs) = printClause c <+> char '|' <+> ppClauses cs
+        ppClauses _ = empty
+        
+        printClause :: [HOLTerm] -> Doc
+        printClause [p, r] = 
+            ppTermRec 1 p <+> text "->" <+> ppTermRec 1 r
+        printClause [p, g, r] =
+            ppTermRec 1 p <+> text "when" <+> ppTermRec 1 g <+>
+            text "->" <+> ppTermRec 1 r
+        printClause _ = empty
+
+        nameOf :: HOLTerm -> Text
+        nameOf (Var x _) = x
+        nameOf (Const x _) = x
+        nameOf _ = textEmpty
 
 -- Printer for Theorems
 	
