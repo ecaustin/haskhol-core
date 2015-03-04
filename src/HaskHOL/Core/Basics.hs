@@ -41,7 +41,9 @@ module HaskHOL.Core.Basics
     , thmFrees     
       -- * Derived Destructors and Constructors for Basic Terms
     , listMkComb  
-    , listMkAbs   
+    , listMkTyComb
+    , listMkAbs
+    , listMkTyAbs   
     , mkArgs     
     , rator       
     , rand      
@@ -52,6 +54,7 @@ module HaskHOL.Core.Basics
     , stripComb
     , stripTyComb 
     , stripAbs
+    , stripTyAbs
       -- * Type Matching Functions
     , typeMatch
     , mkMConst
@@ -483,11 +486,26 @@ listMkComb :: HOLTerm -> [HOLTerm] -> Either String HOLTerm
 listMkComb = foldlM mkComb
 
 {-|
+  Constructs a complex type combination that represents the application of a 
+  term to a list of type arguments.  Fails with 'Left' if any internal call to 
+  'mkComb' fails.
+-}
+listMkTyComb :: HOLTerm -> [HOLType] -> Either String HOLTerm
+listMkTyComb = foldlM mkTyComb
+
+{-|
   Constructs a complex abstraction that represents a term with multiple
   bound variables.  Fails with 'Left' if any internal call to 'mkAbs' fails.
 -}
 listMkAbs :: [HOLTerm] -> HOLTerm -> Either String HOLTerm
 listMkAbs = flip (foldrM mkAbs)
+
+{-|
+  Constructs a complex type abstraction that represents a term with multiple
+  bound variables.  Fails with 'Left' if any internal call to 'mkAbs' fails.
+-}
+listMkTyAbs :: [HOLType] -> HOLTerm -> Either String HOLTerm
+listMkTyAbs = flip (foldrM mkTyAbs)
 
 -- Useful function to create stylized arguments using numbers
 {-|
@@ -576,6 +594,13 @@ stripTyComb = revSplitList destTyComb
 -}
 stripAbs :: HOLTerm -> ([HOLTerm], HOLTerm)
 stripAbs = splitList destAbs
+
+{-|
+  Destructs a complex type abstraction returning its list of bound variables and
+  its body term.
+-}
+stripTyAbs :: HOLTerm -> ([HOLType], HOLTerm)
+stripTyAbs = splitList destTyAbs
 
 -- type matching
 {-|
