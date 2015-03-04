@@ -61,8 +61,8 @@ class Lift a => Protected a where
     -- | Protects a value by sealing it against a provided context.
     protect :: TheoryPath thry -> a -> PData a thry
     -- | Protects a value by sealing it against the current context.
-    protectM :: forall b cls thry. (b ~ a) => b -> HOL cls thry (PData b thry)
-    protectM a = return $! protect (undefined :: TheoryPath thry) a
+    protectM :: forall cls thry. a -> HOL cls thry (PData a thry)
+    protectM x = return $! protect (undefined :: TheoryPath thry) x
     {-| 
       Unseals a protected value, returning it in a monadic computation whose
       current working theory satisfies the context that the value was originally

@@ -28,7 +28,8 @@ module HaskHOL.Core.Ext
     , module HaskHOL.Core.Ext.QQ
       -- * Theory Extension Methods
     , templateProvers
-    , extendTheory
+    , templateTypes
+    --, extendTheory
       -- * Template Haskell Re-Exports
     , module Language.Haskell.TH {-|
         Re-exports 'Q', 'Dec', and 'Exp' for the purpose of writing type
@@ -41,7 +42,7 @@ module HaskHOL.Core.Ext
     ) where
 
 import HaskHOL.Core.Lib hiding (combine)
-import HaskHOL.Core.State.Monad
+import HaskHOL.Core.State.Monad hiding (extendTheory)
 
 import HaskHOL.Core.Ext.Protected
 import HaskHOL.Core.Ext.QQ
@@ -196,6 +197,7 @@ templateProvers ctxName =
   be used vs. 'toHTm'.
 -}
 
+{-
 {-|
   The 'extendTheory' splice acts as a compile-time wrapper to 'runHOL', used for
   the purpose of creating new theory contexts.  It takes three arguments:
@@ -238,3 +240,4 @@ extendTheory old new ld =
            def = ValD (VarP cname) (NormalB (VarE 'mkTheoryPath)) []
        tyDefs <- templateTypes old new
        return $! tyDefs ++ [tySig, def]
+-}

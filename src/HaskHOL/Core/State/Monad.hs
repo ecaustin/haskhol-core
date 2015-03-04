@@ -22,17 +22,16 @@ module HaskHOL.Core.State.Monad
     , Theory
     , Proof
     , runHOLProof
-    , runHOL
+    , runHOLTheory
       -- * Theory Contexts
     , TheoryPath
-    , mkTheoryPath
-    , destTheoryPath
     , BaseThry(..)
     , ExtThry(..)
     , CtxtName(..)
     , PolyTheory
     , BaseCtxt
     , ctxtBase
+    , extendTheory
       -- * Text Output Methods
     , putStrHOL
     , putStrLnHOL
@@ -98,6 +97,8 @@ import Prelude hiding (FilePath)
 import Paths_haskhol_core
 import Shelly hiding (put, get)
 import System.FilePath (combine)
+
+import Data.Coerce
 
 -- Messy Template Haskell stuff
 -- Proofs
@@ -224,11 +225,27 @@ data Theory
 data Proof
 
 -- used internally by runHOLProof and runHOL
-runHOLUnsafe' :: HOL cls thry a -> String -> IO a
-runHOLUnsafe' m fp =
+runHOLInternal :: HOL cls thry a -> TheoryPath thry -> IO a
+runHOLInternal m tp =
     do dir <- getDataDir 
+       let new = newTP tp
+           newFp = dir `combine` new
+       shelly $
+         do cond <- test_d . fromText $ pack newFp  
+            unless cond $
+              do echo . pack $ 
+                   "Note: Rebuilding theory context for " ++ new
+                 echo $ pack "...This may take a while."
+                 liftIO $ 
+                   runHOLTheory (loadTP tp >> checkpointProofs) (oldTP tp) new
+       runHOLUnsafe' m newFp
+
+runHOLUnsafe' :: HOL cls thry a -> String -> IO a
+runHOLUnsafe' m new =
+    do dir <- getDataDir
+       let new' = dir `combine` new
        acid <- openLocalStateFrom (dir `combine` "Proofs") (Proofs Hash.empty)
-       runHOLUnsafe m acid fp `E.finally` closeAcidState acid
+       runHOLUnsafe m acid new' `E.finally` closeAcidState acid
 
 {-| 
   Runs a 'HOL' 'Proof' computation using a provided 'TheoryPath' with access to
@@ -236,7 +253,7 @@ runHOLUnsafe' m fp =
   accessed but not modified.
 -}
 runHOLProof :: HOL Proof thry a -> TheoryPath thry -> IO a
-runHOLProof m (TheoryPath fp) = runHOLUnsafe' m fp
+runHOLProof = runHOLInternal
 
 {-| 
   Evaluates a 'HOL' computation by copying the contents of a provided 
@@ -244,19 +261,28 @@ runHOLProof m (TheoryPath fp) = runHOLUnsafe' m fp
   This is used primarily by 'extendTheory', but is also useful for testing 
   'Theory' computations in temporary directories.
 -}
-runHOL :: HOL cls thry a -> TheoryPath thry -> String -> IO a
-runHOL m (TheoryPath old) new =
-    do dir <- getDataDir
-       let old' = mkFilePath $ dir `combine` old
+runHOLTheory :: HOL cls thry a -> Maybe (TheoryPath thry) -> String -> IO a
+runHOLTheory m (Just old) new =
+    do dir <- getDataDir 
+       let old' = mkFilePath $ dir `combine` (newTP old)
            new' = mkFilePath $ dir `combine` new
-       shelly $ do unlessM (test_d old') . fail $ 
-                     "runHOL: acid-state directory, " ++
-                     old ++ ", does not exist."
-                   whenM (test_d new') . echo . pack $
-                     "runHOL: acid-state directory, " ++
-                     new ++ ", already exists.  Overwriting."
-                   rm_rf new'
-                   cp_r old' new'
+       shelly . print_stderr False $ 
+         do unlessM (test_d old') . liftIO $ 
+              runHOLInternal (return ()) old
+            whenM (test_d new') . echo . pack $
+              "runHOL: acid-state directory, " ++
+              new ++ ", already exists.  Overwriting."
+            rm_rf new'
+            cp_r old' new'
+       runHOLUnsafe' m new
+-- really only used for creating BaseCtxt to prevent needing dummy data files
+runHOLTheory m Nothing new =
+    do dir <- getDataDir
+       let new' = mkFilePath $ dir `combine` new
+       shelly . print_stderr False . unlessM (test_d new') $
+         do echo . pack $ "runHOL: acid-state director, " ++ new ++
+                          " does not exist.  Using empty directory."
+            mkdir new'
        runHOLUnsafe' m new
 
 instance Functor (HOL cls thry) where
@@ -286,22 +312,12 @@ instance Note (HOL cls thry) where
 
 
 -- Theory Contexts
-{-| 
-  A @newtype@ wrapper for the filepath to a theory context that uses a phantom
-  type variable to capture the theory context type.  See 'HOL' for more 
-  information.
--}
-newtype TheoryPath thry = TheoryPath String
-
-{-| Constructs a 'TheoryPath' for a provided theory context type using 
-    'ctxtName'.
--}
-mkTheoryPath :: forall thry. CtxtName thry => TheoryPath thry
-mkTheoryPath = TheoryPath $ ctxtName (undefined :: thry)
-
--- | Destructs a 'TheoryPath', returning its internal 'String'.
-destTheoryPath :: TheoryPath thry -> String
-destTheoryPath (TheoryPath x) = x
+data InnerThry
+data TheoryPath thry = TheoryPath
+    { newTP :: String
+    , oldTP :: Maybe (TheoryPath InnerThry)
+    , loadTP :: HOL Theory InnerThry ()
+    }
 
 -- converts TheoryPath strings to FilePaths for shelly
 mkFilePath :: String -> FilePath
@@ -362,7 +378,17 @@ type instance ExtThry a b == ExtThry a' b' = (a == a') && (b == b')
 
 -- | The 'TheoryPath' for the base theory context.
 ctxtBase :: TheoryPath BaseThry
-ctxtBase = mkTheoryPath
+ctxtBase = 
+    TheoryPath (ctxtName (undefined :: BaseThry)) Nothing (return ())
+
+extendTheory :: forall new old. CtxtName new => TheoryPath old 
+             -> HOL Theory old () -> TheoryPath new
+extendTheory old m = 
+    let old' :: TheoryPath InnerThry
+        old' = coerce old
+        m' :: HOL cls InnerThry ()
+        m' = coerce m in
+      TheoryPath (ctxtName (undefined :: new)) (Just old') m'
 
 
 -- define own versions of IO functions so they can be used external to kernel
@@ -741,14 +767,14 @@ newFlag flag val =
 cacheProof :: PolyTheory thry thry' => String -> TheoryPath thry 
            -> HOL Proof thry HOLThm 
            -> HOL cls thry' HOLThm
-cacheProof lbl (TheoryPath fp) prf = HOL $ \ acid _ ->
+cacheProof lbl tp prf = HOL $ \ acid _ ->
     do qth <- query acid (GetProof lbl)
        case qth of
          Just th -> 
              return th
          Nothing ->
            do putStrLn ("proving: " ++ lbl)
-              th <- runHOLUnsafe prf acid fp
+              th <- runHOLUnsafe prf acid (newTP tp)
               putStrLn (lbl ++ " proved.")
               update acid (InsertProof lbl th)
               return th
@@ -767,7 +793,7 @@ cacheProofs :: forall cls thry thry'. PolyTheory thry thry' => [String]
             -> TheoryPath thry 
             -> HOL Proof thry [HOLThm] 
             -> [HOL cls thry' HOLThm]
-cacheProofs lbls (TheoryPath fp) prf = map cacheProofs' lbls
+cacheProofs lbls tp prf = map cacheProofs' lbls
   where cacheProofs' :: String -> HOL cls thry' HOLThm
         cacheProofs' lbl = HOL $ \ acid _ ->
             do qth <- query acid (GetProof lbl)
@@ -778,10 +804,10 @@ cacheProofs lbls (TheoryPath fp) prf = map cacheProofs' lbls
                    do qths <- liftM catMaybes $ 
                                 mapM (query acid . GetProof) lbls
                       unless (null qths) . fail $
-                         "cacheProofs: some provided labels clas with " ++
+                         "cacheProofs: some provided labels clash with " ++
                          "existing theorems."
                       putStrLn ("proving: " ++ unwords lbls)
-                      ths <- runHOLUnsafe prf acid fp
+                      ths <- runHOLUnsafe prf acid (newTP tp)
                       putStrLn (unwords lbls ++ " proved.")
                       when (length lbls /= length ths) . fail $
                          "cacheProofs: number of labels does not match " ++
@@ -809,3 +835,5 @@ cleanArchiveProofs = HOL $ \ _ _ ->
     do dir <- liftM mkFilePath getDataDir
        let dir' = dir </> ("Proofs" :: FilePath) </> ("Archive" :: FilePath)
        shelly $ rm_rf dir'
+
+

@@ -15,7 +15,7 @@ stability:     experimental
 homepage:      http://haskhol.org
  
 data-dir: data
-data-files: BaseCtxt/.dummy
+data-files: .dummy
 
 library
     default-language:  Haskell2010

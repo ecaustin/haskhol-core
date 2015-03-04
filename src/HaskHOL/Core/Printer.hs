@@ -267,19 +267,23 @@ ppTerm ctxt = render . ppTermRec 0
                              ] in
               if prec == 0 then base else parens base
           where stripTm :: ([Text], HOLTerm) -> ([Text], HOLTerm)
+                stripTm pat@(acc, Comb (Var s _) (Abs (Var bv _) bod))
+                    | s == prep = stripTm (bv:acc, bod)
+                    | otherwise = pat
                 stripTm (acc, Abs (Var bv _) bod) = 
                     stripTm (bv:acc, bod)
-                stripTm pat@(acc, Comb (Const s _) 
-                                 (Abs (Var bv _) bod))
+                stripTm pat@(acc, Comb (Const s _) (Abs (Var bv _) bod))
                     | s == prep = stripTm (bv:acc, bod)
                     | otherwise = pat
                 stripTm pat = pat
    
                 stripTy :: ([Text], HOLTerm) -> ([Text], HOLTerm)
+                stripTy pat@(acc, Comb (Var s _) (TyAbs (TyVar _ bv) bod))
+                    | s == prep = stripTy (('\'' `cons` bv):acc, bod)
+                    | otherwise = pat
                 stripTy (acc, TyAbs (TyVar _ bv) bod) =
                     stripTy (('\'' `cons` bv):acc, bod)
-                stripTy pat@(acc, Comb (Const s _)
-                                 (TyAbs (TyVar _ bv) bod))
+                stripTy pat@(acc, Comb (Const s _) (TyAbs (TyVar _ bv) bod))
                     | s == prep = stripTy (('\'' `cons` bv):acc, bod)
                     | otherwise = pat
                 stripTy pat = pat
