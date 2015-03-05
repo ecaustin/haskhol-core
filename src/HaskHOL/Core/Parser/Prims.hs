@@ -2,11 +2,9 @@ module HaskHOL.Core.Parser.Prims
     ( PreType(..)
     , PreTerm(..)
     , ParseError
-    , HOLContext(..)
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel
 
 import qualified Text.Parsec as P
 
@@ -34,18 +32,3 @@ data PreTerm
 
 -- | A re-export of 'P.ParseError'.
 type ParseError = P.ParseError
-
-data HOLContext thry = HOLContext 
-    { infixes :: ![(Text, (Int, Text))]
-    , prefixes :: ![Text]
-    , binders :: ![Text]
-    , tyBinders :: ![Text]
-    , typesCtxt :: !(Map Text TypeOp)
-    , constsCtxt :: !(Map Text HOLTerm)
-    , typeAbbrevsCtxt :: !(Map Text HOLType)
-    , getInterfaceCtxt :: ![(Text, (Text, HOLType))]
-    , flagPrintAllThm :: !Bool
-    , flagRevInterface :: !Bool
-    , unspacedBinops :: ![Text]
-    , prebrokenBinops :: ![Text]
-    }

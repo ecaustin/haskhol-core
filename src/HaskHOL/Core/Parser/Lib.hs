@@ -18,10 +18,6 @@
 
   * Predicates and modifiers for state extensions used by the parsers.
 
-  Note that, because these state extensions were designed to be used with the
-  parser, the accessor and predicate functions are written to use 'getExtCtxt' 
-  rather than 'getExt' for convenience.
-
   To see what is actually exported to the user, see the module 
   "HaskHOL.Core.Parser".
 -}
@@ -33,8 +29,8 @@ module HaskHOL.Core.Parser.Lib
     , dpty
     , pretypeOfType
     , MyParser
-    , ParseError -- | A re-export of 'ParseError'.
-    , runParser -- |A re-export of 'runParser'.
+    , ParseError
+    , runParserT
     , langDef
     , lexer
     , mysymbol
@@ -65,10 +61,6 @@ module HaskHOL.Core.Parser.Lib
     , FlagRevInterface(..)
     , FlagPrintAllThm(..)
       -- * Extensible Parser Operators
-    , HOLContext(..)
-    , prepHOLContext
-    , getTypeArityCtxt
-    , getConstTypeCtxt
     , parseAsBinder
     , parseAsTyBinder
     , parseAsPrefix
@@ -79,8 +71,12 @@ module HaskHOL.Core.Parser.Lib
     , unparseAsInfix
     , parsesAsBinder
     , parsesAsTyBinder
-    , isPrefix
-    , getInfixStatus
+    , parsesAsPrefix
+    , parsesAsInfix
+    , binders
+    , tyBinders
+    , prefixes
+    , infixes
       -- * Overloading and Interface Mapping
     , makeOverloadable
     , removeInterface
@@ -117,14 +113,11 @@ import HaskHOL.Core.State
 import HaskHOL.Core.Basics
 import HaskHOL.Core.Parser.Prims
 
-import Text.Parsec hiding (runParser, setState, getState, updateState
+import Text.Parsec hiding (runParserT, setState, getState, updateState
                           ,ParseError, (<|>))
 import qualified Text.Parsec as P
 import Text.Parsec.Language
-import Text.Parsec.Text
 import Text.Parsec.Token
-
-import Control.Monad.Identity
 
 import {-# SOURCE #-} HaskHOL.Core.Parser.Rep
 
@@ -424,10 +417,10 @@ pretypeOfType _ = error "pretypeOfType: exhaustive warning."
   in a term have the same arity.  The counter is used to generate fresh names
   in a term.
 -}
-type MyParser thry = GenParser (HOLContext thry, [(Text, Int)], Int)
+type MyParser cls thry = ParsecT Text (Map Text Int, Int) (HOL cls thry)
 
 -- | The Parsec 'LanguageDef' for HaskHOL.
-langDef :: GenLanguageDef Text st Identity
+langDef :: Monad m => GenLanguageDef Text st m
 langDef = LanguageDef
     { commentStart = ""
     , commentEnd = ""
@@ -445,63 +438,63 @@ langDef = LanguageDef
     }
 
 -- | The Parsec token parser for HaskHOL.
-lexer :: GenTokenParser Text (HOLContext thry, [(Text, Int)], Int) Identity
+lexer :: GenTokenParser Text (Map Text Int, Int) (HOL cls thry)
 lexer = makeTokenParser langDef
 
 -- | A version of 'symbol' for our language.
-mysymbol :: String -> MyParser thry Text
+mysymbol :: String -> MyParser cls thry Text
 mysymbol = liftM pack . symbol lexer
 
 -- | A version of 'parens' for our language.
-myparens :: MyParser thry a -> MyParser thry a
+myparens :: MyParser cls thry a -> MyParser cls thry a
 myparens = parens lexer
 
 -- | A version of 'braces' for our language.
-mybraces :: MyParser thry a -> MyParser thry a
+mybraces :: MyParser cls thry a -> MyParser cls thry a
 mybraces = braces lexer
 
 -- | A version of 'brackets' for our language.
-mybrackets :: MyParser thry a -> MyParser thry a
+mybrackets :: MyParser cls thry a -> MyParser cls thry a
 mybrackets = brackets lexer
 
 -- | A version of 'commaSep1' for our language.
-mycommaSep1 :: MyParser thry a -> MyParser thry [a]
+mycommaSep1 :: MyParser cls thry a -> MyParser cls thry [a]
 mycommaSep1 = commaSep1 lexer
 
 -- | A version of 'semiSep' for our language.
-mysemiSep :: MyParser thry a -> MyParser thry [a]
+mysemiSep :: MyParser cls thry a -> MyParser cls thry [a]
 mysemiSep = semiSep lexer
 
 -- | A version of 'semiSep1' for our language.
-mysemiSep1 :: MyParser thry a -> MyParser thry [a]
+mysemiSep1 :: MyParser cls thry a -> MyParser cls thry [a]
 mysemiSep1 = semiSep1 lexer
 
 -- | A version of 'reserved' for our language.
-myreserved :: String -> MyParser thry ()
+myreserved :: String -> MyParser cls thry ()
 myreserved = reserved lexer
 
 -- | A version of 'identifier' for our language.
-myidentifier :: MyParser thry Text
+myidentifier :: MyParser cls thry Text
 myidentifier = liftM pack $ identifier lexer
 
 -- | A version of 'integer' for our language.
-myinteger :: MyParser thry Integer
+myinteger :: MyParser cls thry Integer
 myinteger = integer lexer
 
 -- | A version of 'operator' for our language.
-myoperator :: MyParser thry Text
+myoperator :: MyParser cls thry Text
 myoperator = liftM pack $ operator lexer
 
 -- | A version of 'reservedOp' for our language.
-myreservedOp :: String -> MyParser thry ()
+myreservedOp :: String -> MyParser cls thry ()
 myreservedOp = reservedOp lexer
 
 -- | Selects the first matching symbol.
-choiceSym :: [String] -> MyParser thry Text
+choiceSym :: [String] -> MyParser cls thry Text
 choiceSym ops = choice $ map mysymbol ops
 
 -- | Selects the first matching reserved operator.
-choiceId :: [Text] -> MyParser thry Text
+choiceId :: [Text] -> MyParser cls thry Text
 choiceId ops = choice $ map 
                (\ s -> try $ do s' <- myidentifier <|> myoperator
                                 if s' == s
@@ -509,60 +502,24 @@ choiceId ops = choice $ map
                                    else fail "choiceId") ops
 
 -- | A version of 'whiteSpace' for our language.
-mywhiteSpace :: MyParser thry ()
+mywhiteSpace :: MyParser cls thry ()
 mywhiteSpace = whiteSpace lexer
 
 -- | A re-export of 'P.many'.
-mymany :: MyParser thry a -> MyParser thry [a]
+mymany :: MyParser cls thry a -> MyParser cls thry [a]
 mymany = P.many
 
 -- | A re-export of 'P.many1'.
-mymany1 :: MyParser thry a -> MyParser thry [a]
+mymany1 :: MyParser cls thry a -> MyParser cls thry [a]
 mymany1 = P.many1
 
 -- | A re-export of 'P.sepBy1'.
-mysepBy1 :: MyParser thry a -> MyParser thry b -> MyParser thry [a]
+mysepBy1 :: MyParser cls thry a -> MyParser cls thry b -> MyParser cls thry [a]
 mysepBy1 = P.sepBy1
 
 -- | A re-export of 'P.try'.
-mytry :: MyParser thry a -> MyParser thry a
+mytry :: MyParser cls thry a -> MyParser cls thry a
 mytry = P.try
-
--- State Extensions
-prepHOLContext :: HOL cls thry (HOLContext thry)
-prepHOLContext =
-    do acid1 <- openLocalStateHOL (InfixOps initInfixOps)
-       is <- queryHOL acid1 GetInfixes
-       closeAcidStateHOL acid1
-       acid2 <- openLocalStateHOL (PrefixOps [])
-       ps <- queryHOL acid2 GetPrefixes
-       closeAcidStateHOL acid2
-       acid3 <- openLocalStateHOL (BinderOps initBinderOps)
-       bs <- queryHOL acid3 GetBinders
-       closeAcidStateHOL acid3
-       acid4 <- openLocalStateHOL (TyBinderOps initTyBinderOps)
-       tbs <- queryHOL acid4 GetTyBinders
-       closeAcidStateHOL acid4
-       ts <- types
-       cs <- constants
-       tas <- typeAbbrevs
-       iface <- getInterface
-       cond1 <- getBenignFlag FlagPrintAllThm
-       cond2 <- getBenignFlag FlagRevInterface
-       us <- getUnspacedBinops
-       pbs <- getPrebrokenBinops
-       return $! HOLContext is ps bs tbs ts cs tas iface cond1 cond2 us pbs
-
-
--- Operators
--- A version of 'getTypeArity' for parser contexts.
-getTypeArityCtxt :: HOLContext thry -> Text -> Maybe Int
-getTypeArityCtxt ctxt name =
-    liftM (snd . destTypeOp) . mapLookup name $ typesCtxt ctxt
-
--- A version of 'getConstType' for parser contexts.
-getConstTypeCtxt :: HOLContext thry -> Text -> Maybe HOLType
-getConstTypeCtxt ctxt name = liftM typeOf . mapLookup name $ constsCtxt ctxt
 
 -- | Specifies a 'Text' to be recognized as a term binder by the parser.
 parseAsBinder :: Text -> HOL Theory thry ()
@@ -628,23 +585,52 @@ unparseAsInfix op =
        createCheckpointAndCloseHOL acid
 
 -- | Predicate for 'Text's recognized as term binders by the parser.
-parsesAsBinder :: Text -> HOLContext thry -> Bool
-parsesAsBinder op = elem op . binders
+parsesAsBinder :: Text -> HOL cls thry Bool
+parsesAsBinder op = liftM (elem op) binders
 
--- | Predicate for 'Text's recognized as term binders by the parser.
-parsesAsTyBinder :: Text -> HOLContext thry -> Bool
-parsesAsTyBinder op = elem op . tyBinders
+-- | Predicate for 'Text's recognized as type binders by the parser.
+parsesAsTyBinder :: Text -> HOL cls thry Bool
+parsesAsTyBinder op = liftM (elem op) tyBinders
 
 -- | Predicate for 'Text's recognized as prefix operators by the parser.
-isPrefix :: Text -> HOLContext thry -> Bool
-isPrefix op = elem op . prefixes
+parsesAsPrefix :: Text -> HOL cls thry Bool
+parsesAsPrefix op = liftM (elem op) prefixes
 
-{-| 
-  Predicate for 'Text's recognized as infix operators by the parser.  Returns
-  a precidence and associativity pair guarded by 'Maybe'.
--}
-getInfixStatus :: Text -> HOLContext thry -> Maybe (Int, Text)
-getInfixStatus op = lookup op . infixes
+-- | Predicate for 'Text's recognized as infix operators by the parser.
+parsesAsInfix :: Text -> HOL cls thry Bool
+parsesAsInfix op = liftM (isJust . lookup op) infixes
+
+-- | Returns all binders defined in the context.
+binders :: HOL cls thry [Text]
+binders = 
+    do acid <- openLocalStateHOL (BinderOps initBinderOps)
+       binds <- queryHOL acid GetBinders
+       closeAcidStateHOL acid
+       return binds
+
+-- | Returns all type binders defined in the context.
+tyBinders :: HOL cls thry [Text]
+tyBinders = 
+    do acid <- openLocalStateHOL (TyBinderOps initTyBinderOps)
+       binds <- queryHOL acid GetTyBinders
+       closeAcidStateHOL acid
+       return binds
+
+-- | Returns all prefix operators defined in the context.
+prefixes :: HOL cls thry [Text]
+prefixes = 
+    do acid <- openLocalStateHOL (PrefixOps [])
+       pfxs <- queryHOL acid GetPrefixes
+       closeAcidStateHOL acid
+       return pfxs
+
+-- | Returns all infix operators defined in the context.
+infixes :: HOL cls thry [(Text, (Int, Text))]
+infixes = 
+    do acid <- openLocalStateHOL (InfixOps initInfixOps)
+       ifxs <- queryHOL acid GetInfixes
+       closeAcidStateHOL acid
+       return ifxs
 
 -- Interface
 {-|
@@ -931,10 +917,10 @@ getPrebrokenBinops =
        return ops
 
 -- Re-exports
--- | A re-export of 'P.runParser'.
-runParser :: GenParser st a -> st -> P.SourceName -> Text 
-          -> Either ParseError a
-runParser = P.runParser
+-- | A re-export of 'P.runParserT'.
+runParserT :: Stream s m t => ParsecT s u m a -> u -> SourceName -> s 
+           -> m (Either ParseError a)
+runParserT = P.runParserT
 
 -- | A re-export of 'P.getState'.
 getState :: Monad m => P.ParsecT s u m u

@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, PatternSynonyms, 
              TypeFamilies #-}
-
 {-|
   Module:    HaskHOL.Core.Printer
   Copyright: (c) The University of Kansas 2013
@@ -35,7 +34,7 @@ module HaskHOL.Core.Printer
     , printHOL
     ) where
 
-import HaskHOL.Core.Lib hiding (empty, lefts, rights, base)
+import HaskHOL.Core.Lib hiding ((<$>), empty, lefts, rights, base)
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics
@@ -46,14 +45,14 @@ import HaskHOL.Core.Parser
   exposed to the rest of the system.  Although no harm would come should we
   elect to move this to be re-exported by Core.Lib.
 -}
-import Text.PrettyPrint
+import Text.PrettyPrint.Leijen.Text.Monadic
 
 -- | Pretty printer for 'HOLType's.
-ppType :: HOLType -> String
-ppType = render . ppTypeRec 0
-  where ppTypeRec :: Int -> HOLType -> Doc
-        ppTypeRec _ (TyVar False x) = text $ unpack x
-        ppTypeRec _ (TyVar True x) = text $ '\'' : unpack x
+ppType :: HOLType -> HOL cls thry Doc
+ppType = ppTypeRec 0
+  where ppTypeRec :: Int -> HOLType -> HOL cls thry Doc
+        ppTypeRec _ (TyVar False x) = text x
+        ppTypeRec _ (TyVar True x) = text $ '\'' `cons` x
         ppTypeRec prec ty =
             case destUTypes ty of
               Just (tvs, bod) -> 
@@ -65,7 +64,7 @@ ppType = render . ppTypeRec 0
                   case do (op, tys) <- destType ty 
                           let (name, ar) = destTypeOp op
                               name' = if ar < 0 then '_' `cons` name else name
-                          return (unpack name', tys) of
+                          return (name', tys) of
                     Just (op, []) -> text op
                     Just ("fun", [ty1,ty2]) ->
                         ppTypeApp "->" (prec > 0) [ ppTypeRec 1 ty1
@@ -83,7 +82,7 @@ ppType = render . ppTypeRec 0
                         ppTypeApp "," True (map (ppTypeRec 0) args) <+> text bin
                     _ -> text "ppType: printer error - unrecognized type"
   
-        ppTypeApp :: String -> Bool -> [Doc] -> Doc
+        ppTypeApp :: Text -> Bool -> [HOL cls thry Doc] -> HOL cls thry Doc
         ppTypeApp sepr flag ds =
             case tryFoldr1 (\ x y -> x <+> text sepr <+> y) ds of
               Nothing -> empty
@@ -91,281 +90,279 @@ ppType = render . ppTypeRec 0
 
 -- Printer for Terms
 -- | Pretty printer for 'HOLTerm's.
-ppTerm :: HOLContext thry -> HOLTerm -> String
-ppTerm ctxt = render . ppTermRec 0
-  where ppTermRec :: Int -> HOLTerm -> Doc
-        ppTermRec prec tm =
+ppTerm :: Int -> HOLTerm -> HOL cls thry Doc
+ppTerm prec tm =
 -- numeral case
-          case destNumeral tm of
-           Just x -> integer x
-           Nothing ->
+    (integer #<< destNumeral tm) <|>
 -- List case
-            case destList tm of
-             Just tms -> brackets $ ppTermSeq ";" 0 tms
-             Nothing ->
+    (brackets $ ppTermSeq ";" 0 #<< destList tm) <|>
 -- Type combination case
-              case destTyComb tm of
-               Just (t, ty) -> 
-                 let base = ppTermRec 999 t <+> 
-                            brackets (char ':' <> text (ppType ty)) in
-                   if prec == 1000 then parens base else base
-               Nothing ->
+    (ppTyComb prec #<< destTyComb tm) <|>
 -- Let case
-                case destLet tm of
-                 Just (eq:eqs, bod) ->
-                     let ppLet x = case uncurry primMkEq x of
-                                     Just x' -> ppTermRec 0 x'
-                                     _ -> text "<*bad let binding*>"
-                         base = hang
-                                (text "let" <+> 
-                                 foldr (\ eq' acc -> acc <+> text "and" <+> 
-                                          ppLet eq') (ppLet eq) eqs <+>
-                                 text "in") 2 $ ppTermRec 0 bod in
-                       if prec == 0 then base else parens base       
-                 _ ->
+    (ppLet prec #<< destLet tm) <|>
 -- General abstraction case -- needs work
-                  if isGAbs tm
-                  then let (vs, bod) = stripGAbs tm
-                           base = char '\\' <+> sep (map (ppTermRec 999) vs) <+>
-                                  char '.' <+> ppTermRec 0 bod in
-                         if prec == 0 then base else parens base
-                  else let (hop, args) = stripComb tm in
+    if isGAbs tm then ppGAbs prec tm
+    else let (hop, args) = stripComb tm in
 -- Base term abstraction case
-                       if isAbs hop && null args 
-                       then ppBinder prec "\\" False hop
+    if isAbs hop && null args then ppBinder prec "\\" False hop
 -- Base type abstraction case
-                       else 
-                       if isTyAbs hop && null args
-                       then ppBinder prec "\\\\" True hop
+    else if isTyAbs hop && null args then ppBinder prec "\\\\" True hop
 -- Reverse interface for other cases
-                       else let s0 = case hop of
-                                       Var x _ -> x
-                                       Const x _ -> x
-                                       _ -> textEmpty
-                                ty0 = typeOf hop
-                                s = reverseInterface s0 ty0 
-                                ss = unpack s in
+    else let s0 = nameOf hop
+             ty0 = typeOf hop in
+    do s <- reverseInterface s0 ty0
 -- Match terms
-                       if s == "_MATCH" && length args == 2 && 
-    --ugly hack just to get this to fall through cleanly   
-                          isJust (destClauses $ args !! 1)
-                       then let (m:cs:_) = args
-                                base = text "match" <+> ppTermRec 0 m <+>
-                                       text "with" <+> 
-                                       ppClauses (fromJust $ destClauses cs) in
-                              if prec == 0 then base else parens base
+       if s == "_MATCH" && length args == 2 && 
+          --not ideal from a performance aspect, but it makes things cleaner 
+          isJust (destClauses $ args !! 1)
+          then let (m:cs:_) = args in ppMatch prec m cs                       
 -- Conditional case
-                       else if s == "COND" && length args == 3
-                       then let (c:t:e:_) = args
-                                base = text "if" <+> ppTermRec 0 c <+> 
-                                       text "then" <+> ppTermRec 0 t <+> 
-                                       text "else" <+> ppTermRec 0 e in
-                              if prec == 0 then base else parens base
+          else if s == "COND" && length args == 3
+          then let (c:t:e:_) = args in ppCond prec c t e                    
 -- Prefix operator case           
-                       else 
-                       if s `elem` prefix && 
-                          length args == 1
-                       then let base = text ss <+> ppTermRec 999 (head args) in
-                              if prec == 1000 then parens base else base
--- Non-lambda term binder case
-                       else 
-                       if s `elem` binds && 
-                          length args == 1 && 
-                          isGAbs (head args)
-                       then ppBinder prec s False tm
--- Non-lambda type binder case
-                       else
-                       if s `elem` tybinds && 
-                          length args == 1 &&
-                          isTyAbs (head args)
-                       then ppBinder prec s True tm
--- Infix operator case
-                       else 
-                       let getRight = s `lookup` rights
-                           getLeft = s `lookup` lefts in
-                         if (isJust getRight || isJust getLeft) &&
-                            length args == 2
-                         then let (barg:bargs) = 
-                                   if isJust getRight
-                                   then let (tms, tmt) = 
-                                             splitList (destBinaryTm hop) tm in
-                                          tms ++ [tmt]
-                                   else 
-                                    let (tmt, tms) = 
-                                         revSplitList (destBinaryTm hop) tm in
-                                      tmt:tms 
-                                  newprec = fromMaybe 0 (getRight <|> getLeft)
-                                  wrapper = 
-                                      if newprec <= prec then parens else id
-                                  sepr = 
-                                    if s `elem` unspacedBinops ctxt
-                                    then (\ x y -> cat [x, y]) 
-                                    else (\ x y -> sep [x, y])
-                                  hanger = 
-                                    if s `elem` prebrokenBinops ctxt
-                                    then (\ x y -> x `sepr` (text ss <+> y))
-                                    else (\ x y -> (x <+> text ss) `sepr` y) in
-                                  wrapper $ 
-                                    foldr (\ x acc -> acc `hanger` 
-                                                      ppTermRec newprec x)
-                                    (ppTermRec newprec barg) $ reverse bargs
--- Base constant or variable case
-                       else 
-                       if null args && (isConst hop || isVar hop)
-                       then if s `elem` binds || 
-                               s `elem` tybinds ||
-                               isJust (s `lookup` rights) || 
-                               isJust (s `lookup` lefts) ||
-                               s `elem` prefix
-                            then parens $ text ss
-                            else text ss
--- Base combination case                   
-                       else case destComb tm of
-                              Just (l, r) ->
-                                let base = 
-                                        ppTermRec 999 l <+> ppTermRec 1000 r in
-                                  if prec == 1000 then parens base else base
-                              _ -> text $ "ppTerm: printer error - " ++
-                                          "unrecognized term"
-
-        grabInfix :: Text -> [(Text, (Int, Text))] -> [(Text, Int)]
-        grabInfix a = 
-            mapMaybe (\ (x, (n, a')) -> if a == a' 
-                                        then Just (x, n)
-                                        else Nothing)
-        binds :: [Text]
-        binds = binders ctxt
-
-        tybinds :: [Text]
-        tybinds = tyBinders ctxt
-
-        prefix :: [Text]
-        prefix = prefixes ctxt
-
-        lefts :: [(Text, Int)]
-        lefts = grabInfix "left" $ infixes ctxt
-
-        rights :: [(Text, Int)]
-        rights = grabInfix "right" $ infixes ctxt
-
-        ppTermSeq :: String -> Int -> [HOLTerm] -> Doc
-        ppTermSeq sepr prec = ppTermSeqRec
+          else do cond1 <- parsesAsPrefix s
+                  if cond1 && length args == 1 
+                     then ppPrefix prec s (head args)
+-- Non-lambda term and type binder case
+                     else ppBinders prec s hop args tm <|> 
+                          (ppComb prec #<< destComb tm) <|>
+                          text "ppTerm: printer error - unrecognized term"  
+  where ppTermSeq :: Text -> Int -> [HOLTerm] -> HOL cls thry Doc
+        ppTermSeq sepr prec' = ppTermSeqRec
           where ppTermSeqRec [] = empty
-                ppTermSeqRec [x] = ppTermRec prec x
+                ppTermSeqRec [x] = ppTerm prec' x
                 ppTermSeqRec (x:xs) =
-                  ppTermRec prec x <+> text sepr <+> ppTermSeqRec xs
+                  ppTerm prec' x <+> text sepr <+> ppTermSeqRec xs           
 
-        ppBinder :: Int -> Text -> Bool -> HOLTerm -> Doc
-        ppBinder prec prep f tm =
-            let (vs, bod) = if f then stripTy ([], tm) else stripTm ([], tm)
-                base = let bvs = text (unpack prep) <> 
-                                 foldr (\ x acc -> acc <+> text (unpack x)) 
-                                   empty vs <> char '.'
-                           indent = min (1 + length (render bvs)) 5 in
-                         cat [ bvs
-                             , nest indent $ ppTermRec prec bod
-                             ] in
-              if prec == 0 then base else parens base
-          where stripTm :: ([Text], HOLTerm) -> ([Text], HOLTerm)
-                stripTm pat@(acc, Comb (Var s _) (Abs (Var bv _) bod))
-                    | s == prep = stripTm (bv:acc, bod)
-                    | otherwise = pat
-                stripTm (acc, Abs (Var bv _) bod) = 
-                    stripTm (bv:acc, bod)
-                stripTm pat@(acc, Comb (Const s _) (Abs (Var bv _) bod))
-                    | s == prep = stripTm (bv:acc, bod)
-                    | otherwise = pat
-                stripTm pat = pat
-   
-                stripTy :: ([Text], HOLTerm) -> ([Text], HOLTerm)
-                stripTy pat@(acc, Comb (Var s _) (TyAbs (TyVar _ bv) bod))
-                    | s == prep = stripTy (('\'' `cons` bv):acc, bod)
-                    | otherwise = pat
-                stripTy (acc, TyAbs (TyVar _ bv) bod) =
-                    stripTy (('\'' `cons` bv):acc, bod)
-                stripTy pat@(acc, Comb (Const s _) (TyAbs (TyVar _ bv) bod))
-                    | s == prep = stripTy (('\'' `cons` bv):acc, bod)
-                    | otherwise = pat
-                stripTy pat = pat
+ppBinders :: Int -> Text -> HOLTerm -> [HOLTerm] -> HOLTerm 
+          -> HOL cls thry Doc
+ppBinders prec s hop args tm =
+     do cond2 <- parsesAsBinder s
+        if cond2 && length args == 1 && isGAbs (head args)
+        then ppBinder prec s False tm
+-- Non-lambda type binder case
+        else do cond3 <- parsesAsTyBinder s
+                if cond3 && length args == 1 && isTyAbs (head args)
+                then ppBinder prec s True tm
+-- Infix operator case
+                else ppOperators prec s hop args tm
 
-        destBinaryTm :: HOLTerm -> HOLTerm -> Maybe (HOLTerm, HOLTerm)
-        destBinaryTm c tm =
-            do (il, r) <- destComb tm
-               (i, l) <- destComb il
+ppOperators :: Int -> Text -> HOLTerm -> [HOLTerm] -> HOLTerm 
+            -> HOL cls thry Doc
+ppOperators prec s hop args tm =
+    do getRight <- liftM (lookup s) rights
+       getLeft <- liftM (lookup s) lefts
+       if (isJust getRight || isJust getLeft) && length args == 2
+          then do (barg:bargs) <- 
+                     if isJust getRight
+                     then do (tms, tmt) <- splitListM (destBinaryTm hop) tm
+                             return $! tms ++ [tmt]
+                     else do (tmt, tms) <- revSplitListM (destBinaryTm hop) tm
+                             return $! tmt:tms 
+                  let newprec = fromMaybe 0 (getRight <|> getLeft)
+                      wrapper = if newprec <= prec then parens else id
+                      sepr x y = 
+                          do ops <- getUnspacedBinops
+                             if s `elem` ops
+                                then cat $ sequence [x, y] 
+                                else sep $ sequence [x, y]
+                      hanger x y = 
+                          do ops <- getPrebrokenBinops
+                             if s `elem` ops
+                             then x `sepr` (text s <+> y)
+                             else (x <+> text s) `sepr` y
+                  wrapper $ foldr (\ x acc -> acc `hanger` 
+                                              ppTerm newprec x)
+                              (ppTerm newprec barg) $ reverse bargs
+-- Base constant or variable case
+          else ppConstants s hop args
+  where destBinaryTm :: HOLTerm -> HOLTerm -> HOL cls thry (HOLTerm, HOLTerm)
+        destBinaryTm c t =
+            do (il, r) <- liftO $ destComb t
+               (i, l) <- liftO $ destComb il
                if i == c
-                  then do i' <- destConst i <|> destVar i
-                          c' <- destConst c <|> destVar c
-                          if uncurry reverseInterface i' == 
-                             uncurry reverseInterface c'
-                             then Just (l, r)
-                             else Nothing
-                  else Nothing
+                  then do i' <- liftO $ destConst i <|> destVar i
+                          c' <- liftO $ destConst c <|> destVar c
+                          i'' <- uncurry reverseInterface i'
+                          c'' <- uncurry reverseInterface c'
+                          if i'' == c''
+                             then return (l, r)
+                             else fail "destBinaryTm"
+                  else fail "destBinaryTm"
 
-        reverseInterface :: Text -> HOLType -> Text
-        reverseInterface s0 ty0
-            | not (flagRevInterface ctxt) = s0
-            | otherwise = fromMaybe s0 . liftM fst .
-                            find (\ (_, (s', ty)) -> s' == s0 && 
-                                  isJust (typeMatch ty ty0 ([], [], []))) $
-                              getInterfaceCtxt ctxt
+ppConstants :: Text -> HOLTerm -> [HOLTerm] -> HOL cls thry Doc
+ppConstants s hop args
+    | null args && (isConst hop || isVar hop) =
+          do cond1 <- parsesAsBinder s
+             cond2 <- parsesAsTyBinder s
+             cond3 <- liftM (isJust . lookup s) rights
+             cond4 <- liftM (isJust . lookup s) lefts
+             cond5 <- parsesAsPrefix s
+             if cond1 || cond2 || cond3 || cond4 || cond5
+                then parens $ text s
+                else text s
+-- Base combination case 
+    | otherwise = fail "ppConstants: fall back to ppComb case."          
 
-        destClauses :: HOLTerm -> Maybe [[HOLTerm]]
-        destClauses tm =
-            let (s, args) = stripComb tm in
-              if nameOf s == "_SEQPATTERN" && length args == 2
-              then do c <- destClause (head args)
-                      cs <- destClauses (args !! 1)
-                      return (c:cs)
-              else do c <- destClause tm
-                      return [c]
-          where destClause :: HOLTerm -> Maybe [HOLTerm]
-                destClause tm' =
-                    do (_, pbod) <- liftM stripExists $ body =<< body tm'
-                       let (s, args) = stripComb pbod
-                       if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
-                          then do tm'1 <- rand =<< rator (head args)
-                                  tm'2 <- rand =<< rator (args !! 1)
-                                  return [tm'1, tm'2]
-                          else if nameOf s == "_GUARDED_PATTERN" && 
-                                  length args == 3
-                               then do tm'1 <- rand =<< rator (head args)
-                                       let tm'2 = head $ tail args
-                                       tm'3 <- rand =<< rator (args !! 2)
-                                       return [tm'1, tm'2, tm'3]
-                               else Nothing
+nameOf :: HOLTerm -> Text
+nameOf (Var x _) = x
+nameOf (Const x _) = x
+nameOf _ = textEmpty
 
-        ppClauses :: [[HOLTerm]] -> Doc
-        ppClauses [c] = printClause c
-        ppClauses (c:cs) = printClause c <+> char '|' <+> ppClauses cs
+reverseInterface :: Text -> HOLType -> HOL cls thry Text
+reverseInterface s0 ty0 =
+    do fl <- getBenignFlag (FlagRevInterface)
+       if not fl
+          then return s0
+          else do iface <- getInterface
+                  let s1 = find (\ (_, (s', ty)) -> 
+                                   s' == s0 && 
+                                   isJust (typeMatch ty ty0 ([], [], []))) iface
+                  return $! maybe s0 fst s1
+
+grabInfix :: Text -> [(Text, (Int, Text))] -> [(Text, Int)]
+grabInfix a = 
+    mapMaybe $ \ (x, (n, a')) -> if a == a' then Just (x, n) else Nothing
+
+lefts :: HOL cls thry [(Text, Int)]
+lefts = liftM (grabInfix "left") infixes
+
+rights :: HOL cls thry [(Text, Int)]
+rights = liftM (grabInfix "right") infixes
+
+ppTyComb :: Int -> (HOLTerm, HOLType) -> HOL cls thry Doc
+ppTyComb prec (t, ty) =
+    let base = ppTerm 999 t <+> 
+               brackets (char ':' <> ppType ty) in
+      if prec == 1000 then parens base else base
+
+ppLet :: Int -> ([(HOLTerm, HOLTerm)], HOLTerm) -> HOL cls thry Doc
+ppLet prec ((eq:eqs), bod) =
+    let base = (text "let" <+> 
+                foldr (\ eq' acc -> acc <+> text "and" <+> 
+                                    ppLet' eq') (ppLet' eq) eqs <+>
+                text "in") <$> indent 2 (ppTerm 0 bod) in
+      if prec == 0 then base else parens base  
+  where ppLet' :: (HOLTerm, HOLTerm) -> HOL cls thry Doc
+        ppLet' x =
+            case uncurry primMkEq x of
+              Just x' -> ppTerm 0 x'
+              _ -> text "<*bad let binding*>"
+ppLet prec (_, bod) = ppTerm prec bod
+
+ppGAbs :: Int -> HOLTerm -> HOL cls thry Doc
+ppGAbs prec tm =
+    let (vs, bod) = stripGAbs tm
+        base = char '\\' <+> sep (mapM (ppTerm 999) vs) <+>
+               char '.' <+> ppTerm 0 bod in
+      if prec == 0 then base else parens base
+
+ppBinder :: Int -> Text -> Bool -> HOLTerm -> HOL cls thry Doc
+ppBinder prec prep f tm =
+    let (vs, bod) = strip f ([], tm) in
+      do bvs <- text prep <> 
+                foldr (\ x acc -> acc <+> text x) empty vs <> 
+                char '.'
+         let base = let ident = min (1 + length (show bvs)) 5 in
+                      cat $ sequence [ return bvs
+                                     , nest ident $ ppTerm prec bod
+                                     ]
+         if prec == 0 
+            then base 
+            else parens base
+  where strip :: Bool -> ([Text], HOLTerm) -> ([Text], HOLTerm)
+        strip True pat@(acc, Comb (Var s _) (Abs (Var bv _) bod))
+            | s == prep = strip True (bv:acc, bod)
+            | otherwise = pat
+        strip True pat@(acc, Comb (Const s _) (Abs (Var bv _) bod))
+            | s == prep = strip True (bv:acc, bod)
+            | otherwise = pat
+        strip False pat@(acc, Comb (Var s _) (TyAbs (TyVar _ bv) bod))
+            | s == prep = strip False (('\'' `cons` bv):acc, bod)
+            | otherwise = pat
+        strip False pat@(acc, Comb (Const s _) (TyAbs (TyVar _ bv) bod))
+            | s == prep = strip False (('\'' `cons` bv):acc, bod)
+            | otherwise = pat
+        strip True (acc, Abs (Var bv _) bod) = 
+            strip True (bv:acc, bod)
+        strip False (acc, TyAbs (TyVar _ bv) bod) =
+            strip False (('\'' `cons` bv):acc, bod)
+        strip _ pat = pat
+
+ppMatch :: Int -> HOLTerm -> HOLTerm -> HOL cls thry Doc
+ppMatch prec m cls =
+    let base = text "match" <+> ppTerm 0 m <+>
+               text "with" <+> 
+               ppClauses (fromJust $ destClauses cls) in
+      if prec == 0 then base else parens base
+  where ppClauses :: [[HOLTerm]] -> HOL cls thry Doc
+        ppClauses [c] = ppClause c
+        ppClauses (c:cs) = ppClause c <+> char '|' <+> ppClauses cs
         ppClauses _ = empty
-        
-        printClause :: [HOLTerm] -> Doc
-        printClause [p, r] = 
-            ppTermRec 1 p <+> text "->" <+> ppTermRec 1 r
-        printClause [p, g, r] =
-            ppTermRec 1 p <+> text "when" <+> ppTermRec 1 g <+>
-            text "->" <+> ppTermRec 1 r
-        printClause _ = empty
 
-        nameOf :: HOLTerm -> Text
-        nameOf (Var x _) = x
-        nameOf (Const x _) = x
-        nameOf _ = textEmpty
+        ppClause :: [HOLTerm] -> HOL cls thry Doc
+        ppClause [p, r] = 
+            ppTerm 1 p <+> text "->" <+> ppTerm 1 r
+        ppClause [p, g, r] =
+            ppTerm 1 p <+> text "when" <+> ppTerm 1 g <+>
+            text "->" <+> ppTerm 1 r
+        ppClause _ = empty
+
+destClauses :: HOLTerm -> Maybe [[HOLTerm]]
+destClauses tm =
+    let (s, args) = stripComb tm in
+      if nameOf s == "_SEQPATTERN" && length args == 2
+      then do c <- destClause (head args)
+              cs <- destClauses (args !! 1)
+              return (c:cs)
+      else do c <- destClause tm
+              return [c]
+  where destClause :: HOLTerm -> Maybe [HOLTerm]
+        destClause tm' =
+            do (_, pbod) <- liftM stripExists $ body =<< body tm'
+               let (s, args) = stripComb pbod
+               if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
+                  then do tm'1 <- rand =<< rator (head args)
+                          tm'2 <- rand =<< rator (args !! 1)
+                          return [tm'1, tm'2]
+                  else if nameOf s == "_GUARDED_PATTERN" && 
+                          length args == 3
+                       then do tm'1 <- rand =<< rator (head args)
+                               let tm'2 = head $ tail args
+                               tm'3 <- rand =<< rator (args !! 2)
+                               return [tm'1, tm'2, tm'3]
+                       else Nothing
+
+ppCond :: Int -> HOLTerm -> HOLTerm -> HOLTerm -> HOL cls thry Doc
+ppCond prec c t e =
+    let base = text "if" <+> ppTerm 0 c <+> 
+               text "then" <+> ppTerm 0 t <+> 
+               text "else" <+> ppTerm 0 e in
+      if prec == 0 then base else parens base
+
+ppPrefix :: Int -> Text -> HOLTerm -> HOL cls thry Doc
+ppPrefix prec s arg =
+    let base = text s <+> ppTerm 999 arg in
+      if prec == 1000 then parens base else base
+
+ppComb :: Int -> (HOLTerm, HOLTerm) -> HOL cls thry Doc
+ppComb prec (l, r) =
+    let base = ppTerm 999 l <+> ppTerm 1000 r in
+      if prec == 1000 then parens base else base
 
 -- Printer for Theorems
 	
--- | Pretty printer for 'HOLTheorem's.	
-ppThm :: HOLContext thry -> HOLThm -> String
-ppThm ctxt (Thm asl c) = render ppThmRec
-  where ppThmRec :: Doc
-        ppThmRec = 
-          let c' = text $ ppTerm ctxt c
-              asl'
-                  | null asl = [empty]
-                  | not (flagPrintAllThm ctxt) = [text "..."]
-                  | otherwise = showHOLListRec comma $ map (ppTerm ctxt) asl in
-            sep (asl' ++ [text "|-" <+> c'])
-ppThm _ _ = error "ppThm: exhaustive warning."
+-- | Pretty printer for 'HOLThm's.	
+ppThm :: HOLThm -> HOL cls thry Doc
+ppThm (Thm [] c) = text "|-" <+> ppTerm 0 c
+ppThm (Thm asl c) =
+    do fl <- getBenignFlag FlagPrintAllThm
+       let base = text "|-" <+> ppTerm 0 c
+       if not fl
+          then text "..." <> base
+          else let asl' = encloseSep empty empty comma $ mapM (ppTerm 0) asl in
+                 asl' <+> base
+ppThm _ = error "ppThm: exhaustive warning."
 
 {-| 
   The @ShowHOL@ class is functionally equivalent to 'show' lifted to the 'HOL'
@@ -379,46 +376,47 @@ class ShowHOL a where
     -}
     showHOL :: a -> HOL cls thry String
     showHOLList :: [a] -> HOL cls thry String
-    showHOLList = liftM (showHOLList' brackets comma) . mapM showHOL
+    showHOLList = showHOLList' brackets comma <=< mapM showHOL
 
 instance ShowHOL a => ShowHOL [a] where
     showHOL = showHOLList
     
 instance (ShowHOL a, ShowHOL b) => ShowHOL (a, b) where
-    showHOL (a, b) = liftM (showHOLList' parens comma) . sequence $ 
+    showHOL (a, b) = showHOLList' parens comma =<< sequence 
                        [showHOL a, showHOL b]
 
 instance (ShowHOL a, ShowHOL b, ShowHOL c) => 
          ShowHOL (a, b, c) where
-    showHOL (a, b, c) = liftM (showHOLList' parens comma) . sequence $ 
+    showHOL (a, b, c) = showHOLList' parens comma =<< sequence 
                           [showHOL a, showHOL b, showHOL c]
 
 instance (ShowHOL a, ShowHOL b, ShowHOL c, ShowHOL d) => 
          ShowHOL (a, b, c, d) where
-    showHOL (a, b, c, d) = liftM (showHOLList' parens comma) . sequence $ 
+    showHOL (a, b, c, d) = showHOLList' parens comma =<< sequence
                              [showHOL a, showHOL b, showHOL c, showHOL d]
 
 -- Prints a list of strings provided a wrapper function and seperator document.
-showHOLList' :: (Doc -> Doc) -> Doc -> [String] -> String
-showHOLList' wrap sepr = render . wrap . sep . showHOLListRec sepr
+showHOLList' :: (HOL cls thry Doc -> HOL cls thry Doc) -> HOL cls thry Doc 
+             -> [String] -> HOL cls thry String
+showHOLList' wrap sepr =
+    liftM show . wrap . sep . sequence . showHOLListRec sepr
   
 -- Useful to have at top level for ppThm.
-showHOLListRec :: Doc -> [String] -> [Doc]
+showHOLListRec :: HOL cls thry Doc -> [String] -> [HOL cls thry Doc]
 showHOLListRec _ [] = [empty]
-showHOLListRec _ [x] = [text x]
-showHOLListRec sepr (x:xs) = (text x <> sepr <> space) : showHOLListRec sepr xs
+showHOLListRec _ [x] = [text $ pack x]
+showHOLListRec sepr (x:xs) = (text' x <> sepr <> space) : showHOLListRec sepr xs
+   where text' = text . pack
 
 -- orphan instances
 instance ShowHOL HOLType where
-    showHOL ty = return $ ':' : ppType ty
+    showHOL = liftM ((:) ':' . show ) . ppType
 
 instance ShowHOL HOLTerm where
-    showHOL tm = do ctxt <- prepHOLContext
-                    return $! ppTerm ctxt tm
+    showHOL = liftM show . ppTerm 0
 
 instance ShowHOL HOLThm where
-    showHOL thm = do ctxt <- prepHOLContext
-                     return $! ppThm ctxt thm
+    showHOL = liftM show . ppThm
 
 {-| 
   Prints a HOL object with a new line.  A composition of 'putStrLnHOL' and

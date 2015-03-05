@@ -2,7 +2,8 @@ module HaskHOL.Core.Parser where
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Parser.Prims
+import HaskHOL.Core.State.Monad
 
-holTermParser :: Text -> HOLContext thry -> Either ParseError PreTerm
+holTermParser :: Text -> HOL cls thry PreTerm
 
-holTypeParser :: Text -> HOLContext thry -> Either ParseError PreType
+holTypeParser :: Text -> HOL cls thry PreType

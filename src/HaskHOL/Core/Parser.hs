@@ -40,19 +40,22 @@ import HaskHOL.Core.Parser.TypeParser
 import HaskHOL.Core.Parser.TermParser
 import HaskHOL.Core.Parser.Elab
 import HaskHOL.Core.Parser.Rep
+import HaskHOL.Core.State.Monad
 
 {-| Runs a custom parser when provided with an input 'String' and a 
     'HOLContext'.
 -}
-runHOLParser :: MyParser thry a -> Text -> HOLContext thry -> 
-                Either ParseError a
-runHOLParser parser input ctxt =
-    runParser parser (ctxt, [], 0) "" input
+runHOLParser :: MyParser cls thry a -> Text -> HOL cls thry a
+runHOLParser parser input =
+    do parse <- runParserT parser (mapEmpty, 0) "" input
+       case parse of
+         Left err -> fail $ show err
+         Right res -> return res
 
 -- | Parser for 'HOLTerm's.
-holTermParser :: Text -> HOLContext thry -> Either ParseError PreTerm
+holTermParser :: Text -> HOL cls thry PreTerm
 holTermParser = runHOLParser pterm
 
 -- | Parser for 'HOLType's.
-holTypeParser :: Text -> HOLContext thry -> Either ParseError PreType
+holTypeParser :: Text -> HOL cls thry PreType
 holTypeParser = runHOLParser ptype

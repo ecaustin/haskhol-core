@@ -31,13 +31,13 @@ library
                    , hashable >= 1.2
                    , mtl >= 2.1
                    , parsec >= 3.1
-                   , pretty >= 1.1
                    , safecopy >= 0.8
                    , shelly >= 1.5
                    , text >= 1.2
                    , text-show >= 0.6
                    , th-lift >= 0.7
                    , unordered-containers >= 0.2
+                   , wl-pprint-text >= 1.1
 
     exposed-modules:
       HaskHOL.Core

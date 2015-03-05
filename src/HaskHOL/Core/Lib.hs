@@ -60,6 +60,7 @@ module HaskHOL.Core.Lib
     , revAssocd
       -- * Methods for Error Handling
     , can
+    , can'
     , canNot
     , check
     , note
@@ -268,8 +269,8 @@ import qualified Data.List as L
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Ratio as R
-import Data.Text (Text)
-import qualified Data.Text as Text
+import Data.Text.Lazy (Text)
+import qualified Data.Text.Lazy as Text
 import qualified Text.Show.Text as Text (Show, show)
 import qualified Data.Tuple as T
 -- Acid State imports
@@ -474,6 +475,14 @@ revAssocd = revLookupd
 -}
 can :: (Alternative m, Monad m) => (a -> m b) -> a -> m Bool
 can f x = (f x >> return True) <|> return False
+
+{-| 
+  A version of 'can' that instead marks success or failure with a 'Maybe' value.
+  Turns a potentially failing monadic computation into a guarded, always 
+  successful monadic computation.
+-}
+can' :: (Alternative m, Monad m) => (a -> m b) -> a -> m (Maybe b)
+can' f x = (f x >>= \ x' -> return (Just x')) <|> return Nothing
 
 {-| 
   The opposite of 'can'.  Functionally equivalent to 
@@ -1554,7 +1563,7 @@ textStrip = Text.strip
 
 -- | A re-export of 'Text.show'.
 textShow :: Text.Show a => a -> Text
-textShow = Text.show
+textShow = Text.fromStrict . Text.show
 
 -- Acid State re-exports
 

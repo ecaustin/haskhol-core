@@ -54,9 +54,6 @@ import Language.Haskell.TH.Quote (QuasiQuoter)
 import Language.Haskell.TH.Syntax  
 
 import Prelude hiding (FilePath)
-import Paths_haskhol_core
-import Shelly
-import System.FilePath (combine)
 
 {-|
   The 'templateTypes' splice automatically generates the types and type 

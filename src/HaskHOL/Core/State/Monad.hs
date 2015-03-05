@@ -75,7 +75,7 @@ module HaskHOL.Core.State.Monad
     , Exception
     ) where
 
-import HaskHOL.Core.Lib hiding (combine)
+import HaskHOL.Core.Lib hiding (combine, pack)
 import HaskHOL.Core.Kernel.Prims
 
 -- HOL Monad imports
@@ -97,6 +97,7 @@ import Prelude hiding (FilePath)
 import Paths_haskhol_core
 import Shelly hiding (put, get)
 import System.FilePath (combine)
+import Data.Text (pack)
 
 import Data.Coerce
 

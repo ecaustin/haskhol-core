@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Parser.TermParser
   Copyright: (c) The University of Kansas 2013
@@ -60,23 +60,24 @@ module HaskHOL.Core.Parser.TermParser
     ) where
 
 import HaskHOL.Core.Lib
-
 import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.TypeParser
+import HaskHOL.Core.State (getConstType)
+
+import Control.Monad.Trans (lift)
 
 -- | Parser for HOL terms.
-pterm :: MyParser thry PreTerm
+pterm :: MyParser cls thry PreTerm
 pterm = 
     (do mywhiteSpace
-        (ctxt, _, _) <- getState
-        expressionParser (infixes ctxt) ptyped)
+        expressionParser ptyped)
     <|> (do s <- myidentifier <|> myoperator
             return $! PVar s dpty)
 
-ptyped :: MyParser thry PreTerm
+ptyped :: MyParser cls thry PreTerm
 ptyped = pas =<< pappl
 
-pappl :: MyParser thry PreTerm
+pappl :: MyParser cls thry PreTerm
 pappl = 
     (do p <- pprefix
         tm <- pappl
@@ -84,12 +85,10 @@ pappl =
     <|> do (tm:tms) <- mymany1 pbinder
            return $! foldr (flip PComb) tm (reverse tms)
 
-pprefix :: MyParser thry Text
-pprefix =
-    do (ctxt, _, _) <- getState
-       choiceId $ prefixes ctxt
+pprefix :: MyParser cls thry Text
+pprefix = choiceId =<< lift prefixes
 
-pbinder :: MyParser thry PreTerm
+pbinder :: MyParser cls thry PreTerm
 pbinder = 
     (do myreserved "let"
         tms <- pterm `mysepBy1` myreserved "and"
@@ -98,15 +97,13 @@ pbinder =
         case mkLet tms bod of
           Nothing -> fail "pterm: invalid let construction"
           Just tm -> return tm)
-    <|> (do (ctxt, _, _) <- getState
-            bind <- choiceId $ binders ctxt
+    <|> (do bind <- choiceId =<< lift binders
             (do vars <- mymany1 pvar
                 myreservedOp "."
                 bod <- pterm
                 return $! mkBinders bind vars bod)
              <|> (return $! PVar bind dpty))
-    <|> (do (ctxt, _, _) <- getState
-            bind <- choiceId $ tyBinders ctxt
+    <|> (do bind <- choiceId =<< lift tyBinders
             (do vars <- mymany1 psmall
                 myreservedOp "."
                 bod <- pterm
@@ -115,30 +112,30 @@ pbinder =
     <|> pinst
     where 
 
-pinst :: MyParser thry PreTerm
+pinst :: MyParser cls thry PreTerm
 pinst = 
     (do myreserved "TYINST"
         vars <- mymany1 pinst'
         tm <- patomic
         return $! PInst vars tm)
     <|> patomic
-    where pinst' :: MyParser thry (PreType, Text)
+    where pinst' :: MyParser cls thry (PreType, Text)
           pinst' = myparens $ do myreservedOp "_"
                                  x <- myidentifier
                                  myreservedOp ":"
                                  ty <- ptype
                                  return (ty, x)
                               
-pvar :: MyParser thry PreTerm
+pvar :: MyParser cls thry PreTerm
 pvar = pas =<< patomic
 
-pas :: PreTerm -> MyParser thry PreTerm
+pas :: PreTerm -> MyParser cls thry PreTerm
 pas tm =
     (do myreservedOp ":"
         ty <- ptype
         return $! PAs tm ty) <|> return tm
 
-patomic :: MyParser thry PreTerm
+patomic :: MyParser cls thry PreTerm
 patomic =
     myparens ((do myreservedOp ":"
                   ty <- ptype
@@ -183,44 +180,41 @@ patomic =
             c <- pclauses
             return $! PComb (PVar "_FUNCTION" dpty) c)  
     <|> mytry (do x <- myidentifier <|> myoperator
-                  (ctxt, _, _) <- getState
-                  if x `notElem` prefixes ctxt &&
-                     x `notElem` map fst (infixes ctxt) &&
-                     x `notElem` binders ctxt
-                  then return $! PVar x dpty
-                  else fail "patomic")
+                  cond1 <- lift $ parsesAsPrefix x
+                  cond2 <- lift $ parsesAsInfix x
+                  cond3 <- lift $ parsesAsBinder x
+                  cond4 <- lift $ parsesAsTyBinder x
+                  if not (cond1 || cond2 || cond3 || cond4)
+                     then return $! PVar x dpty
+                     else fail "patomic")
 
-pclauses :: MyParser thry PreTerm
+pclauses :: MyParser cls thry PreTerm
 pclauses =
     do c <- pclause `mysepBy1` myreservedOp "|"
        return $! foldr1 (\ s t -> PComb (PComb (PVar "_SEQPATTERN" dpty) s) t) c
-  where pclause :: MyParser thry PreTerm
+  where pclause :: MyParser cls thry PreTerm
         pclause = do (pat:guards) <- pterm `mysepBy1` myreserved "when"
                      myreservedOp "->"
                      res <- pterm
                      mkPattern pat guards res
 
 -- helper functions
-pgenVar :: MyParser thry PreTerm
+pgenVar :: MyParser cls thry PreTerm
 pgenVar = 
-    do (ctxt, ops, n) <- getState
-       setState (ctxt, ops, succ n)
+    do (ops, n) <- getState
+       setState (ops, succ n)
        return $! PVar (pack $ "_GENPVAR_" ++ show n) dpty
 
-pfrees :: PreTerm -> [PreTerm] -> MyParser thry [PreTerm]
+pfrees :: PreTerm -> [PreTerm] -> MyParser cls thry [PreTerm]
 pfrees ptm@(PVar v pty) acc
     | textNull v && pty == dpty = return acc
     | otherwise = 
-          do (ctxt, _, _) <- getState
-             case getConstTypeCtxt ctxt v of
-               Just _ -> return acc
-               Nothing ->
-                   case numOfString (unpack v) :: (Maybe Integer) of
-                     Just _ -> return acc
-                     Nothing -> 
-                         case lookup v $ getInterfaceCtxt ctxt of
-                           Just _ -> return acc
-                           Nothing -> return $! ptm `insert` acc
+          do cond1 <- lift $ can getConstType v
+             let cond2 = isJust (numOfString (unpack v) :: Maybe Integer)
+             cond3 <- lift $ liftM (isJust . lookup v) getInterface
+             if cond1 || cond2 || cond3
+                then return acc
+                else return $! ptm `insert` acc
 pfrees PConst{} acc = return acc
 pfrees (PComb p1 p2) acc = pfrees p1 =<< pfrees p2 acc
 pfrees (PAbs p1 p2) acc =
@@ -262,7 +256,7 @@ mkTyBinder n v bod = PComb (PVar n dpty) $ TyPAbs v bod
 mkTyBinders :: Text -> [PreType] -> PreTerm -> PreTerm
 mkTyBinders bind vars bod = foldr (mkTyBinder bind) bod vars
 
-mkPattern :: PreTerm -> [PreTerm] -> PreTerm -> MyParser thry PreTerm
+mkPattern :: PreTerm -> [PreTerm] -> PreTerm -> MyParser cls thry PreTerm
 mkPattern pat guards res =
     do x <- pgenVar
        y <- pgenVar
@@ -281,26 +275,31 @@ mkPattern pat guards res =
     
 
 -- build expression parser from infix operators in context
-expressionParser :: [(Text, (Int, Text))] -> MyParser thry PreTerm
-                 -> MyParser thry PreTerm
-expressionParser [] prs = prs
-expressionParser infxs@((_, (p, at)):_) prs =
-     let (topins, rest) = partition (\ (_, pat') -> pat' == (p, at)) infxs
-         parse' = if at == "right" then pRightBinary else pLeftBinary in
-       parse' (expressionParser rest prs)
-              (choiceId (map fst topins))
-              (\ op x y -> PComb (PComb (PVar op dpty) x) y)
+expressionParser :: forall cls thry. MyParser cls thry PreTerm 
+                 -> MyParser cls thry PreTerm
+expressionParser prs = expressionParser' =<< lift infixes
+    where expressionParser' :: [(Text, (Int, Text))] 
+                            -> MyParser cls thry PreTerm
+          expressionParser' [] = prs
+          expressionParser' infxs@((_, (p, at)):_) =
+              let (topins, rest) = partition (\ (_, pat') -> 
+                                              pat' == (p, at)) infxs
+                  parse' = if at == "right" then pRightBinary 
+                           else pLeftBinary in
+                parse' (expressionParser' rest)
+                       (choiceId (map fst topins))
+                       (\ op x y -> PComb (PComb (PVar op dpty) x) y)
 
-sepPair :: MyParser thry Text -> MyParser thry PreTerm 
-        -> MyParser thry [(Text, PreTerm)]
+sepPair :: MyParser cls thry Text -> MyParser cls thry PreTerm 
+        -> MyParser cls thry [(Text, PreTerm)]
 sepPair sep prs =
     mymany (do l <- sep
                r <- prs
                return (l, r))
 
-pRightBinary :: MyParser thry PreTerm -> MyParser thry Text
+pRightBinary :: MyParser cls thry PreTerm -> MyParser cls thry Text
              -> (Text -> PreTerm -> PreTerm -> PreTerm) 
-             -> MyParser thry PreTerm
+             -> MyParser cls thry PreTerm
 pRightBinary prs sep cns =
   do x <- prs
      opxs <- sepPair sep prs
@@ -311,9 +310,9 @@ pRightBinary prs sep cns =
                  Just res -> return res
                  _ -> fail "pRightBinary"
 
-pLeftBinary :: MyParser thry PreTerm -> MyParser thry Text
+pLeftBinary :: MyParser cls thry PreTerm -> MyParser cls thry Text
             -> (Text -> PreTerm -> PreTerm -> PreTerm) 
-            -> MyParser thry PreTerm
+            -> MyParser cls thry PreTerm
 pLeftBinary prs sep cns =
   do x <- prs
      opxs <- sepPair sep prs
