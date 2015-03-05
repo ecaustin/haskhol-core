@@ -271,22 +271,22 @@ ppBinder prec prep f tm =
             then base 
             else parens base
   where strip :: Bool -> ([Text], HOLTerm) -> ([Text], HOLTerm)
-        strip True pat@(acc, Comb (Var s _) (Abs (Var bv _) bod))
-            | s == prep = strip True (bv:acc, bod)
+        strip False pat@(acc, Comb (Var s _) (Abs (Var bv _) bod))
+            | s == prep = strip False (bv:acc, bod)
             | otherwise = pat
-        strip True pat@(acc, Comb (Const s _) (Abs (Var bv _) bod))
-            | s == prep = strip True (bv:acc, bod)
+        strip False pat@(acc, Comb (Const s _) (Abs (Var bv _) bod))
+            | s == prep = strip False (bv:acc, bod)
             | otherwise = pat
-        strip False pat@(acc, Comb (Var s _) (TyAbs (TyVar _ bv) bod))
-            | s == prep = strip False (('\'' `cons` bv):acc, bod)
+        strip True pat@(acc, Comb (Var s _) (TyAbs (TyVar _ bv) bod))
+            | s == prep = strip True (('\'' `cons` bv):acc, bod)
             | otherwise = pat
-        strip False pat@(acc, Comb (Const s _) (TyAbs (TyVar _ bv) bod))
-            | s == prep = strip False (('\'' `cons` bv):acc, bod)
+        strip True pat@(acc, Comb (Const s _) (TyAbs (TyVar _ bv) bod))
+            | s == prep = strip True (('\'' `cons` bv):acc, bod)
             | otherwise = pat
-        strip True (acc, Abs (Var bv _) bod) = 
-            strip True (bv:acc, bod)
-        strip False (acc, TyAbs (TyVar _ bv) bod) =
-            strip False (('\'' `cons` bv):acc, bod)
+        strip False (acc, Abs (Var bv _) bod) = 
+            strip False (bv:acc, bod)
+        strip True (acc, TyAbs (TyVar _ bv) bod) =
+            strip True (('\'' `cons` bv):acc, bod)
         strip _ pat = pat
 
 ppMatch :: Int -> HOLTerm -> HOLTerm -> HOL cls thry Doc
