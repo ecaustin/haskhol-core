@@ -68,6 +68,7 @@ module HaskHOL.Core.Parser.Lib
     , HOLContext(..)
     , prepHOLContext
     , getTypeArityCtxt
+    , getConstTypeCtxt
     , parseAsBinder
     , parseAsTyBinder
     , parseAsPrefix
@@ -543,13 +544,14 @@ prepHOLContext =
        tbs <- queryHOL acid4 GetTyBinders
        closeAcidStateHOL acid4
        ts <- types
+       cs <- constants
        tas <- typeAbbrevs
        iface <- getInterface
        cond1 <- getBenignFlag FlagPrintAllThm
        cond2 <- getBenignFlag FlagRevInterface
        us <- getUnspacedBinops
        pbs <- getPrebrokenBinops
-       return $! HOLContext is ps bs tbs ts tas iface cond1 cond2 us pbs
+       return $! HOLContext is ps bs tbs ts cs tas iface cond1 cond2 us pbs
 
 
 -- Operators
@@ -557,6 +559,10 @@ prepHOLContext =
 getTypeArityCtxt :: HOLContext thry -> Text -> Maybe Int
 getTypeArityCtxt ctxt name =
     liftM (snd . destTypeOp) . mapLookup name $ typesCtxt ctxt
+
+-- A version of 'getConstType' for parser contexts.
+getConstTypeCtxt :: HOLContext thry -> Text -> Maybe HOLType
+getConstTypeCtxt ctxt name = liftM typeOf . mapLookup name $ constsCtxt ctxt
 
 -- | Specifies a 'Text' to be recognized as a term binder by the parser.
 parseAsBinder :: Text -> HOL Theory thry ()

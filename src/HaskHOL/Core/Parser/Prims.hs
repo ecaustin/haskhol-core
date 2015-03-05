@@ -41,6 +41,7 @@ data HOLContext thry = HOLContext
     , binders :: ![Text]
     , tyBinders :: ![Text]
     , typesCtxt :: !(Map Text TypeOp)
+    , constsCtxt :: !(Map Text HOLTerm)
     , typeAbbrevsCtxt :: !(Map Text HOLType)
     , getInterfaceCtxt :: ![(Text, (Text, HOLType))]
     , flagPrintAllThm :: !Bool

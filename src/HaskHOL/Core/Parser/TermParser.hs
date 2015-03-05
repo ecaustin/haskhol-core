@@ -212,7 +212,7 @@ pfrees ptm@(PVar v pty) acc
     | textNull v && pty == dpty = return acc
     | otherwise = 
           do (ctxt, _, _) <- getState
-             case getTypeArityCtxt ctxt v of
+             case getConstTypeCtxt ctxt v of
                Just _ -> return acc
                Nothing ->
                    case numOfString (unpack v) :: (Maybe Integer) of
