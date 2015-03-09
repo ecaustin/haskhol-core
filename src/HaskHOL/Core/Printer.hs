@@ -369,7 +369,7 @@ ppThm _ = error "ppThm: exhaustive warning."
   monad.  It is used to retrieve the current working theory to be used with the
   context sensitive pretty printers for 'HOLTerm's and 'HOLType's.
 -}
-class ShowHOL a where
+class ShowHOL cls thry a where
     {-| 
       A version of 'show' lifted to the 'HOL' monad for context sensitive pretty
       printers.
@@ -378,20 +378,21 @@ class ShowHOL a where
     showHOLList :: [a] -> HOL cls thry String
     showHOLList = showHOLList' brackets comma <=< mapM showHOL
 
-instance ShowHOL a => ShowHOL [a] where
+instance ShowHOL cls thry a => ShowHOL cls thry [a] where
     showHOL = showHOLList
     
-instance (ShowHOL a, ShowHOL b) => ShowHOL (a, b) where
+instance (ShowHOL cls thry a, ShowHOL cls thry b) => ShowHOL cls thry (a, b) where
     showHOL (a, b) = showHOLList' parens comma =<< sequence 
                        [showHOL a, showHOL b]
 
-instance (ShowHOL a, ShowHOL b, ShowHOL c) => 
-         ShowHOL (a, b, c) where
+instance (ShowHOL cls thry a, ShowHOL cls thry b, ShowHOL cls thry c) => 
+         ShowHOL cls thry (a, b, c) where
     showHOL (a, b, c) = showHOLList' parens comma =<< sequence 
                           [showHOL a, showHOL b, showHOL c]
 
-instance (ShowHOL a, ShowHOL b, ShowHOL c, ShowHOL d) => 
-         ShowHOL (a, b, c, d) where
+instance (ShowHOL cls thry a, ShowHOL cls thry b
+         ,ShowHOL cls thry c, ShowHOL cls thry d) => 
+         ShowHOL cls thry (a, b, c, d) where
     showHOL (a, b, c, d) = showHOLList' parens comma =<< sequence
                              [showHOL a, showHOL b, showHOL c, showHOL d]
 
@@ -409,18 +410,18 @@ showHOLListRec sepr (x:xs) = (text' x <> sepr <> space) : showHOLListRec sepr xs
    where text' = text . pack
 
 -- orphan instances
-instance ShowHOL HOLType where
+instance ShowHOL cls thry HOLType where
     showHOL = liftM ((:) ':' . show ) . ppType
 
-instance ShowHOL HOLTerm where
+instance ShowHOL cls thry HOLTerm where
     showHOL = liftM show . ppTerm 0
 
-instance ShowHOL HOLThm where
+instance ShowHOL cls thry HOLThm where
     showHOL = liftM show . ppThm
 
 {-| 
   Prints a HOL object with a new line.  A composition of 'putStrLnHOL' and
   'showHOL'.
 -}
-printHOL :: ShowHOL a => a -> HOL cls thry ()
+printHOL :: ShowHOL cls thry a => a -> HOL cls thry ()
 printHOL = putStrLnHOL <=< showHOL

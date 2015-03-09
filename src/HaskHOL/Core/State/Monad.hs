@@ -23,6 +23,7 @@ module HaskHOL.Core.State.Monad
     , Proof
     , runHOLProof
     , runHOLTheory
+    , runHOLHint
       -- * Theory Contexts
     , TheoryPath
     , BaseThry(..)
@@ -100,6 +101,7 @@ import System.FilePath (combine)
 import Data.Text (pack)
 
 import Data.Coerce
+import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
 
 -- Messy Template Haskell stuff
 -- Proofs
@@ -286,6 +288,22 @@ runHOLTheory m Nothing new =
             mkdir new'
        runHOLUnsafe' m new
 
+-- string must be expression of type (HOL cls thry a).
+-- could check this and throw a better error, but this works for now.
+runHOLHint :: forall cls thry a. (CtxtName thry, Typeable a) => String 
+           -> [String] -> HOL cls thry a
+runHOLHint m mods = HOL $ \ _ _ -> 
+    do r <- runInterpreter $
+              do setImports $ ["Prelude", "HaskHOL.Core"]++mods
+                 set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
+                 let ctxt = ctxtName (undefined :: thry)
+                     ctxt' = "ctxt" ++ take (length ctxt - 4) ctxt
+                 let f x = "runHOLProof (" ++ x ++ ") " ++ ctxt'
+                 liftIO =<< interpret (f m) (as :: IO a)
+       case r of
+         Left err -> fail $ show err
+         Right res -> return res
+
 instance Functor (HOL cls thry) where
     fmap = liftM
     
@@ -326,13 +344,13 @@ mkFilePath = fromText . pack
 
 
 -- | The 'BaseThry' type is the type of the initial working theory.
-data BaseThry = BaseThry
+data BaseThry = BaseThry deriving Typeable
 {-| 
   The 'ExtThry' type is the type of a linear theory extension, i.e. a cons-like
   operation for theory types.  See the module "HaskHOL.Lib.Equal.Context" for
   an example of how to correctly define theory types and contexts for a library.
 -}
-data ExtThry a b = ExtThry a b
+data ExtThry a b = ExtThry a b deriving Typeable
 
 {-|
   The 'CtxtName' class associates a 'String' representation of context names

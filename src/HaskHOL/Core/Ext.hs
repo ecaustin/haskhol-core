@@ -117,7 +117,7 @@ templateTypes _ lbl =
         instDec = InstanceD [] (AppT (ConT ''CtxtName) (ConT dataName))
                     [FunD 'ctxtName [Clause [WildP] 
                       (NormalB (LitE (StringL $ upLbl ++ "Ctxt"))) []]]
-        dataDec = DataD [] dataName [] [] []
+        dataDec = DataD [] dataName [] [] [''Typeable]
         tyName = mkName $ upLbl ++ "Type"
         newThry = ConT ''ExtThry `AppT` dataType `AppT` oldThry
         -- splices: type _Type = ExtThry _Thry oldThry
