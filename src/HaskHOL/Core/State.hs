@@ -398,7 +398,7 @@ newAxiom name tm =
                         createCheckpointAndCloseHOL acid'
                         return th
                    
- -- | Retrieves an axiom by label from the theory context.
+-- | Retrieves an axiom by label from the theory context.
 getAxiom :: Text -> HOL cls thry HOLThm
 getAxiom lbl =
     do acid <- openLocalStateHOL (TheAxioms mapEmpty)

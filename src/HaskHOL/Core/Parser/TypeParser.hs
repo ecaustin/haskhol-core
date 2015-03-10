@@ -129,10 +129,15 @@ pappty =
              _ -> fail $ "type parser: unrecognized case for type operator " ++
                          "variable")
         <|> ((do x <- myidentifier
-                 n <- lift $ getTypeArity x
-                 if n == length tys
-                    then return $! PTyComb (PTyCon x) tys
-                    else fail "type parser: bad arity for type application")
+                 ar <- lift $ can' getTypeArity x
+                 case ar of
+                   Nothing -> fail $ "type parser: unsupported type " ++
+                                     "variable application."
+                   Just n
+                     | n == length tys -> 
+                           return $! PTyComb (PTyCon x) tys
+                     | otherwise -> 
+                           fail "type parser: bad arity for type application")
         <|> (case tys of
                [ty] -> return ty
                _ -> fail "type parser: unexpected list of types"))
@@ -150,11 +155,15 @@ pappty =
                   _ -> fail "type parser: unrecognized case for type operator.")
    <|> (do ty <- patomty
            mytry (do x <- myidentifier
-                     n <- lift $ getTypeArity x
-                     if n == 1
-                        then return $! PTyComb (PTyCon x) [ty]
-                        else fail $ "type parser: bad arity for unary type" 
-                                    ++ " application")
+                     ar <- lift $ can' getTypeArity x
+                     case ar of
+                       Nothing -> fail $ "type parser: unrecognized constant" 
+                                         ++ " in unary application."
+                       Just n ->
+                           if n == 1
+                           then return $! PTyComb (PTyCon x) [ty]
+                           else fail $ "type parser: bad arity for unary type" 
+                                       ++ " application")
             <|> return ty)
 
 patomty :: MyParser cls thry PreType

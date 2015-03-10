@@ -21,6 +21,7 @@ module HaskHOL.Core.State.Monad
       HOL
     , Theory
     , Proof
+    , mkProofGeneral
     , runHOLProof
     , runHOLTheory
     , runHOLHint
@@ -102,6 +103,7 @@ import Data.Text (pack)
 
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
+import Language.Haskell.Interpreter.Unsafe
 
 -- Messy Template Haskell stuff
 -- Proofs
@@ -220,12 +222,18 @@ makeAcidic ''BenignFlags ['insertFlag, 'lookupFlag]
 newtype HOL cls thry a = 
     HOL { -- not exposed to the user
           runHOLUnsafe :: AcidState Proofs -> String -> IO a
-        }
+        } deriving Typeable
 
 -- | The classification tag for theory extension computations.
 data Theory
 -- | The classification tag for proof computations.
-data Proof
+data Proof deriving Typeable
+
+{-| 
+  Can be used to make 'Proof' computations more general, e.g. more polymorphic.
+-}
+mkProofGeneral :: HOL Proof thry a -> HOL cls thry a
+mkProofGeneral = coerce
 
 -- used internally by runHOLProof and runHOL
 runHOLInternal :: HOL cls thry a -> TheoryPath thry -> IO a
@@ -288,21 +296,30 @@ runHOLTheory m Nothing new =
             mkdir new'
        runHOLUnsafe' m new
 
--- string must be expression of type (HOL cls thry a).
--- could check this and throw a better error, but this works for now.
-runHOLHint :: forall cls thry a. (CtxtName thry, Typeable a) => String 
-           -> [String] -> HOL cls thry a
-runHOLHint m mods = HOL $ \ _ _ -> 
+{-|
+  Used to dynamically evaluate a 'HOL' computation using the 'interpret'
+  method from @Language.Haskell.Interpreter@.
+
+  The first provided argument is the 'String' representation of the computation
+  to evaluate.  Note that the type of this computation must be 
+  @HOL Proof thry a@, otherwise a run-time exception will be thrown.
+
+  The second provided argument is the list of 'String' names for the modules
+  that must be imported for the computation to succeed.  Note that 'interpret'
+  requires the ascribed type to be in scope in addition to any terms and types
+  referred to in the computation string.
+-}
+runHOLHint :: forall cls thry a. (Typeable thry, Typeable a) 
+           => String -> [String] -> HOL cls thry a
+runHOLHint m mods = HOL $ \ acid tp -> 
     do r <- runInterpreter $
-              do setImports $ ["Prelude", "HaskHOL.Core"]++mods
-                 set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
-                 let ctxt = ctxtName (undefined :: thry)
-                     ctxt' = "ctxt" ++ take (length ctxt - 4) ctxt
-                 let f x = "runHOLProof (" ++ x ++ ") " ++ ctxt'
-                 liftIO =<< interpret (f m) (as :: IO a)
+                do setImports $ ["Prelude", "HaskHOL.Core"]++mods
+                   set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
+                   unsafeSetGhcOption "-fcontext-stack=200"
+                   interpret m (as :: HOL Proof thry a)
        case r of
          Left err -> fail $ show err
-         Right res -> return res
+         Right res -> runHOLUnsafe res acid tp
 
 instance Functor (HOL cls thry) where
     fmap = liftM
@@ -332,6 +349,15 @@ instance Note (HOL cls thry) where
 
 -- Theory Contexts
 data InnerThry
+
+{-| 
+  The 'TheoryPath' data type contains the information necessary to both
+  retrieve and reconstruct theory contexts.  They are safely constructed via the
+  'extendTheory' method which builds new 'TheoryPath' values from old ones.
+
+  The 'ctxtBase' value can be used as a starting point, providing a linear 
+  ordering of theory contexts.
+-}
 data TheoryPath thry = TheoryPath
     { newTP :: String
     , oldTP :: Maybe (TheoryPath InnerThry)
@@ -400,6 +426,11 @@ ctxtBase :: TheoryPath BaseThry
 ctxtBase = 
     TheoryPath (ctxtName (undefined :: BaseThry)) Nothing (return ())
 
+{-|
+  Constructs a new 'TheoryPath' value by extending an old value with a provided 
+  'HOL' computation.  This formulation of theory paths allows the reconstruction
+  of theory contexts without having to recompile libraries.
+-}
 extendTheory :: forall new old. CtxtName new => TheoryPath old 
              -> HOL Theory old () -> TheoryPath new
 extendTheory old m = 
