@@ -33,6 +33,7 @@ library
                    , mtl >= 2.1
                    , parsec >= 3.1
                    , safecopy >= 0.8
+                   , system-filepath >= 0.4
                    , shelly >= 1.5
                    , text >= 1.2
                    , text-show >= 0.6

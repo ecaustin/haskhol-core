@@ -27,6 +27,8 @@ module HaskHOL.Core.State.Monad
     , runHOLHint
       -- * Theory Contexts
     , TheoryPath
+    , Module
+    , thisModule'
     , BaseThry(..)
     , ExtThry(..)
     , CtxtName(..)
@@ -72,7 +74,6 @@ module HaskHOL.Core.State.Monad
     , cacheProof
     , cacheProofs
     , checkpointProofs
-    , cleanArchiveProofs
       -- * Re-export for Extensible Exceptions
     , Exception
     ) where
@@ -92,15 +93,17 @@ import Data.Acid hiding (makeAcidic, Query, Update)
 
 -- TH imports
 import Language.Haskell.TH
-import Language.Haskell.TH.Syntax (lift)
+import Language.Haskell.TH.Syntax (lift, Module(..), modString)
 
 -- Path Handling imports
 import Prelude hiding (FilePath)
 import Paths_haskhol_core
 import Shelly hiding (put, get)
+import Filesystem.Path (dirname)
 import System.FilePath (combine)
 import Data.Text (pack)
 
+-- interpreter stuff
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
 import Language.Haskell.Interpreter.Unsafe
@@ -221,7 +224,7 @@ makeAcidic ''BenignFlags ['insertFlag, 'lookupFlag]
 -}
 newtype HOL cls thry a = 
     HOL { -- not exposed to the user
-          runHOLUnsafe :: AcidState Proofs -> String -> IO a
+          runHOLUnsafe :: AcidState Proofs -> String -> [String] -> IO a
         } deriving Typeable
 
 -- | The classification tag for theory extension computations.
@@ -236,11 +239,17 @@ mkProofGeneral :: HOL Proof thry a -> HOL cls thry a
 mkProofGeneral = coerce
 
 -- used internally by runHOLProof and runHOL
+buildModList :: TheoryPath thry -> [String] -> [String]
+buildModList x acc
+    | isNothing (oldTP x) = acc
+    | otherwise = buildModList (fromJust $ oldTP x) (modTP x : acc)
+
 runHOLInternal :: HOL cls thry a -> TheoryPath thry -> IO a
 runHOLInternal m tp =
     do dir <- getDataDir 
        let new = newTP tp
            newFp = dir `combine` new
+           mods = buildModList tp []
        shelly $
          do cond <- test_d . fromText $ pack newFp  
             unless cond $
@@ -248,15 +257,16 @@ runHOLInternal m tp =
                    "Note: Rebuilding theory context for " ++ new
                  echo $ pack "...This may take a while."
                  liftIO $ 
-                   runHOLTheory (loadTP tp >> checkpointProofs) (oldTP tp) new
-       runHOLUnsafe' m newFp
+                   runHOLTheory (loadTP tp >> checkpointProofs >> cleanArchives)
+                     (oldTP tp) new
+       runHOLUnsafe' m newFp mods
 
-runHOLUnsafe' :: HOL cls thry a -> String -> IO a
-runHOLUnsafe' m new =
+runHOLUnsafe' :: HOL cls thry a -> String -> [String] -> IO a
+runHOLUnsafe' m new mods =
     do dir <- getDataDir
        let new' = dir `combine` new
        acid <- openLocalStateFrom (dir `combine` "Proofs") (Proofs Hash.empty)
-       runHOLUnsafe m acid new' `E.finally` closeAcidState acid
+       runHOLUnsafe m acid new' mods `E.finally` closeAcidState acid
 
 {-| 
   Runs a 'HOL' 'Proof' computation using a provided 'TheoryPath' with access to
@@ -277,6 +287,7 @@ runHOLTheory m (Just old) new =
     do dir <- getDataDir 
        let old' = mkFilePath $ dir `combine` (newTP old)
            new' = mkFilePath $ dir `combine` new
+           mods = buildModList old []
        shelly . print_stderr False $ 
          do unlessM (test_d old') . liftIO $ 
               runHOLInternal (return ()) old
@@ -285,7 +296,7 @@ runHOLTheory m (Just old) new =
               new ++ ", already exists.  Overwriting."
             rm_rf new'
             cp_r old' new'
-       runHOLUnsafe' m new
+       runHOLUnsafe' m new mods
 -- really only used for creating BaseCtxt to prevent needing dummy data files
 runHOLTheory m Nothing new =
     do dir <- getDataDir
@@ -294,7 +305,7 @@ runHOLTheory m Nothing new =
          do echo . pack $ "runHOL: acid-state director, " ++ new ++
                           " does not exist.  Using empty directory."
             mkdir new'
-       runHOLUnsafe' m new
+       runHOLUnsafe' m new ["HaskHOL.Core.State.Monad"]
 
 {-|
   Used to dynamically evaluate a 'HOL' computation using the 'interpret'
@@ -305,30 +316,28 @@ runHOLTheory m Nothing new =
   @HOL Proof thry a@, otherwise a run-time exception will be thrown.
 
   The second provided argument is the list of 'String' names for the modules
-  that must be imported for the computation to succeed.  Note that 'interpret'
-  requires the ascribed type to be in scope in addition to any terms and types
-  referred to in the computation string.
+  that must be imported for the computation to succeed.
 -}
 runHOLHint :: forall cls thry a. (Typeable thry, Typeable a) 
            => String -> [String] -> HOL cls thry a
-runHOLHint m mods = HOL $ \ acid tp -> 
+runHOLHint m mods = HOL $ \ acid tp thryMods -> 
     do r <- runInterpreter $
-                do setImports $ ["Prelude", "HaskHOL.Core"]++mods
+                do setImports $ ["Prelude", "HaskHOL.Core"] ++ mods ++ thryMods
                    set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
                    unsafeSetGhcOption "-fcontext-stack=200"
                    interpret m (as :: HOL Proof thry a)
        case r of
          Left err -> fail $ show err
-         Right res -> runHOLUnsafe res acid tp
+         Right res -> runHOLUnsafe res acid tp thryMods
 
 instance Functor (HOL cls thry) where
     fmap = liftM
     
 instance Monad (HOL cls thry) where
-    return x = HOL $ \ _ _ -> return x
-    m >>= k = HOL $ \ acid st -> 
-        do b <- runHOLUnsafe m acid st
-           runHOLUnsafe (k b) acid st
+    return x = HOL $ \ _ _ _ -> return x
+    m >>= k = HOL $ \ acid st mods -> 
+        do b <- runHOLUnsafe m acid st mods
+           runHOLUnsafe (k b) acid st mods
     fail = throwHOL . HOLException
 
 instance MonadPlus (HOL cls thry) where
@@ -361,6 +370,7 @@ data InnerThry
 data TheoryPath thry = TheoryPath
     { newTP :: String
     , oldTP :: Maybe (TheoryPath InnerThry)
+    , modTP :: String
     , loadTP :: HOL Theory InnerThry ()
     }
 
@@ -424,7 +434,13 @@ type instance ExtThry a b == ExtThry a' b' = (a == a') && (b == b')
 -- | The 'TheoryPath' for the base theory context.
 ctxtBase :: TheoryPath BaseThry
 ctxtBase = 
-    TheoryPath (ctxtName (undefined :: BaseThry)) Nothing (return ())
+    TheoryPath (ctxtName (undefined :: BaseThry)) Nothing 
+      "HaskHOL.Core.State.Monad" (return ()) 
+      
+thisModule' :: Q Exp
+thisModule' = 
+    do (Module _ modname) <- thisModule
+       litE . stringL $ modString modname
 
 {-|
   Constructs a new 'TheoryPath' value by extending an old value with a provided 
@@ -432,24 +448,24 @@ ctxtBase =
   of theory contexts without having to recompile libraries.
 -}
 extendTheory :: forall new old. CtxtName new => TheoryPath old 
-             -> HOL Theory old () -> TheoryPath new
-extendTheory old m = 
+             -> String -> HOL Theory old () -> TheoryPath new
+extendTheory old modname m = 
     let old' :: TheoryPath InnerThry
         old' = coerce old
         m' :: HOL cls InnerThry ()
         m' = coerce m in
-      TheoryPath (ctxtName (undefined :: new)) (Just old') m'
+      TheoryPath (ctxtName (undefined :: new)) (Just old') modname m'
 
 
 -- define own versions of IO functions so they can be used external to kernel
 
 -- | A version of 'putStr' lifted to the 'HOL' monad.
 putStrHOL :: String -> HOL cls thry ()
-putStrHOL x = HOL $ \ _ _ -> putStr x
+putStrHOL x = HOL $ \ _ _ _ -> putStr x
 
 -- | A version of 'putStrLn' lifted to the 'HOL' monad.
 putStrLnHOL :: String -> HOL cls thry ()
-putStrLnHOL x = HOL $ \ _ _ -> putStrLn x
+putStrLnHOL x = HOL $ \ _ _ _ -> putStrLn x
 
 -- Errors
 -- the basic HOL exception type
@@ -476,7 +492,7 @@ instance Exception HOLException
     > fail "empty - HOL"
 -}
 throwHOL :: Exception e => e -> HOL cls thry a
-throwHOL x = HOL $ \ _ _ -> E.throwIO x
+throwHOL x = HOL $ \ _ _ _ -> E.throwIO x
 
 {-| 
   A version of 'E.catch' lifted to the 'HOL' monad.
@@ -487,19 +503,20 @@ throwHOL x = HOL $ \ _ _ -> E.throwIO x
 -}
 catchHOL :: Exception e => HOL cls thry a -> (e -> HOL cls thry a) -> 
                            HOL cls thry a
-catchHOL job errcase = HOL $ \ acid st -> 
-    runHOLUnsafe job acid st `E.catch` \ e -> runHOLUnsafe (errcase e) acid st
+catchHOL job errcase = HOL $ \ acid st mods -> 
+    runHOLUnsafe job acid st mods `E.catch` 
+    \ e -> runHOLUnsafe (errcase e) acid st mods
 
 -- Used to define mplus and (<|>) for the HOL monad.  Not exposed to the user.
 (<||>) :: HOL cls thry a -> HOL cls thry a -> HOL cls thry a
-job <||> alt = HOL $ \ acid st -> 
-   runHOLUnsafe job acid st `E.catch` 
-     \ (_ :: E.SomeException) -> runHOLUnsafe alt acid st
+job <||> alt = HOL $ \ acid st mods -> 
+   runHOLUnsafe job acid st mods `E.catch` 
+     \ (_ :: E.SomeException) -> runHOLUnsafe alt acid st mods
 
 -- | A version of 'note' specific to 'HOL' computations.
 noteHOL :: String -> HOL cls thry a -> HOL cls thry a
-noteHOL str m = HOL $ \ acid st ->
-    runHOLUnsafe m acid st `E.catch` \ (e :: E.SomeException) ->
+noteHOL str m = HOL $ \ acid st mods ->
+    runHOLUnsafe m acid st mods `E.catch` \ (e :: E.SomeException) ->
         case E.fromException e of
           Just (HOLException str2) -> 
               E.throwIO . HOLException $ str ++ ": " ++ str2
@@ -527,8 +544,8 @@ liftEither str1 (Left str2) = fail $ str1 ++ ": " ++ show str2
 
 -- | A version of 'E.finally' lifted to the 'HOL' monad.
 finallyHOL :: HOL cls thry a -> HOL cls thry b -> HOL cls thry a
-finallyHOL a b = HOL $ \ acid st ->
-    runHOLUnsafe a acid st `E.finally` runHOLUnsafe b acid st
+finallyHOL a b = HOL $ \ acid st mods ->
+    runHOLUnsafe a acid st mods `E.finally` runHOLUnsafe b acid st mods
 
 -- Local vars
 -- | A type synonym for 'IORef'.
@@ -539,28 +556,28 @@ type HOLRef = IORef
   to 'newIORef' lifted to the 'HOL' monad.
 -}
 newHOLRef :: a -> HOL cls thry (HOLRef a)
-newHOLRef ref = HOL $ \ _ _ -> newIORef ref
+newHOLRef ref = HOL $ \ _ _ _ -> newIORef ref
 
 {-|
   Reads a 'HOLRef' returning the stored value.  Functionally equivalent to 
   'readIORef' lifted to the 'HOL' monad.
 -}
 readHOLRef :: IORef a -> HOL cls thry a
-readHOLRef ref = HOL $ \ _ _ -> readIORef ref
+readHOLRef ref = HOL $ \ _ _ _ -> readIORef ref
 
 {-|
   Writes a value to a 'HOLRef'.  Functionally equivalent to 'writeHOLRef' lifted
   to the 'HOL' monad.
 -}
 writeHOLRef :: IORef a -> a -> HOL cls thry ()
-writeHOLRef ref x = HOL $ \ _ _ -> writeIORef ref x
+writeHOLRef ref x = HOL $ \ _ _ _ -> writeIORef ref x
 
 {-|
   Applies a given function to a 'HOLRef', modifying the stored value.
   Functionally equivalent to 'modifyHOLRef' lifted to the 'HOL' monad.
 -}
 modifyHOLRef :: IORef a -> (a -> a) -> HOL cls thry ()
-modifyHOLRef ref f = HOL $ \ _ _ -> modifyIORef ref f
+modifyHOLRef ref f = HOL $ \ _ _ _ -> modifyIORef ref f
 
 -- acid primitives
 
@@ -581,7 +598,7 @@ openLocalState' ast suf =
 -}
 openLocalStateHOL :: (Typeable st, IsAcidic st) => st 
                   -> HOL cls thry (AcidState st)
-openLocalStateHOL ast = HOL $ \ _ st -> openLocalState' ast st
+openLocalStateHOL ast = HOL $ \ _ st _ -> openLocalState' ast st
 
 {-| 
   A version of 'openLocalStateHOL' that uses just @HaskHOL.Core@'s shared data
@@ -589,19 +606,19 @@ openLocalStateHOL ast = HOL $ \ _ st -> openLocalState' ast st
 -}
 openLocalStateHOLBase :: (Typeable st, IsAcidic st) => st 
                       -> HOL cls thry (AcidState st)
-openLocalStateHOLBase ast = HOL $ \ _ _ -> openLocalState' ast ""
+openLocalStateHOLBase ast = HOL $ \ _ _ _ -> openLocalState' ast ""
 
 -- | A wrapper to 'closeAcidState' for the 'HOL' monad.
 closeAcidStateHOL :: (SafeCopy st, Typeable st) => AcidState st 
                   -> HOL cls thry ()
-closeAcidStateHOL ast = HOL $ \ _ _ -> closeAcidState ast
+closeAcidStateHOL ast = HOL $ \ _ _ _ -> closeAcidState ast
 
 {-| 
   A version of 'closeAcidStateHOL' that calls 'createCheckpoint' and 
   'createArchive' first. -}
 createCheckpointAndCloseHOL :: (SafeCopy st, Typeable st) => AcidState st 
                             -> HOL cls thry ()
-createCheckpointAndCloseHOL ast = HOL $ \ _ _ ->
+createCheckpointAndCloseHOL ast = HOL $ \ _ _ _ ->
     do createCheckpoint ast
        createArchive ast
        closeAcidState ast
@@ -611,10 +628,11 @@ createCheckpointAndCloseHOL ast = HOL $ \ _ _ ->
   in a theory context that were created by 'createCheckpointAndCloseHOL'.
 -}
 cleanArchives :: HOL cls thry ()
-cleanArchives = HOL $ \ _ st ->
+cleanArchives = HOL $ \ _ _ _ ->
     do dir <- getDataDir
-       let dir' = mkFilePath $ dir `combine` st
-       shelly $ do archvs <- findWhen (\ x -> return $! x == "Archive") dir'
+       let dir' = mkFilePath dir
+       shelly $ do archvs <- findWhen (\ x -> return $! 
+                                         dirname x == "Archive") dir'
                    mapM_ rm_rf archvs
 
 {-|
@@ -627,7 +645,7 @@ cleanArchives = HOL $ \ _ st ->
 -}
 updateHOLUnsafe :: UpdateEvent event => AcidState (EventState event) -> event 
                 -> HOL cls thry (EventResult event)
-updateHOLUnsafe ast e = HOL $ \ _ _ -> update ast e
+updateHOLUnsafe ast e = HOL $ \ _ _ _ -> update ast e
 
 {-| 
   A version of 'updateHOLUnsafe' that restricts the classification of the 
@@ -640,7 +658,7 @@ updateHOL = updateHOLUnsafe
 -- | A wrapper to 'query' for the 'HOL' monad.
 queryHOL :: QueryEvent event => AcidState (EventState event) -> event 
          -> HOL cls thry (EventResult event)
-queryHOL ast e = HOL $ \ _ _ -> query ast e
+queryHOL ast e = HOL $ \ _ _ _ -> query ast e
 
 
 -- Flag Methods
@@ -817,14 +835,14 @@ newFlag flag val =
 cacheProof :: PolyTheory thry thry' => String -> TheoryPath thry 
            -> HOL Proof thry HOLThm 
            -> HOL cls thry' HOLThm
-cacheProof lbl tp prf = HOL $ \ acid _ ->
+cacheProof lbl tp prf = HOL $ \ acid _ mods ->
     do qth <- query acid (GetProof lbl)
        case qth of
          Just th -> 
              return th
          Nothing ->
            do putStrLn ("proving: " ++ lbl)
-              th <- runHOLUnsafe prf acid (newTP tp)
+              th <- runHOLUnsafe prf acid (newTP tp) mods
               putStrLn (lbl ++ " proved.")
               update acid (InsertProof lbl th)
               return th
@@ -845,7 +863,7 @@ cacheProofs :: forall cls thry thry'. PolyTheory thry thry' => [String]
             -> [HOL cls thry' HOLThm]
 cacheProofs lbls tp prf = map cacheProofs' lbls
   where cacheProofs' :: String -> HOL cls thry' HOLThm
-        cacheProofs' lbl = HOL $ \ acid _ ->
+        cacheProofs' lbl = HOL $ \ acid _ mods ->
             do qth <- query acid (GetProof lbl)
                case qth of
                  Just th -> 
@@ -857,7 +875,7 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                          "cacheProofs: some provided labels clash with " ++
                          "existing theorems."
                       putStrLn ("proving: " ++ unwords lbls)
-                      ths <- runHOLUnsafe prf acid (newTP tp)
+                      ths <- runHOLUnsafe prf acid (newTP tp) mods
                       putStrLn (unwords lbls ++ " proved.")
                       when (length lbls /= length ths) . fail $
                          "cacheProofs: number of labels does not match " ++
@@ -873,17 +891,8 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
   and archive for the proofs cache specifically.
 -}
 checkpointProofs :: HOL cls thry ()
-checkpointProofs = HOL $ \ acid _ ->
+checkpointProofs = HOL $ \ acid _ _ ->
     do createCheckpoint acid
        createArchive acid
-
-{-| 
-  A version of 'cleanArchives' for the proofs cache specifically.
--}
-cleanArchiveProofs :: HOL cls thry ()
-cleanArchiveProofs = HOL $ \ _ _ ->
-    do dir <- liftM mkFilePath getDataDir
-       let dir' = dir </> ("Proofs" :: FilePath) </> ("Archive" :: FilePath)
-       shelly $ rm_rf dir'
 
 
