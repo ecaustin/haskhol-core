@@ -118,7 +118,7 @@ pappty =
              Left (UTyVar _ s _) ->
                -- fresh ty op var so add it to state
                let n = length tys in
-                 do updateState (\ (ops, y) -> (mapInsert s n ops, y))
+                 do updateState (first (mapInsert s n))
                     let c' = UTyVar False s n
                     return $! PTyComb c' tys
              Right c'@(UTyVar _ _ n) ->
@@ -146,7 +146,7 @@ pappty =
                  case c of
                   Left (UTyVar _ s _) ->
                     let n = length tys in
-                      do updateState (\ (ops, y) -> (mapInsert s n ops, y))
+                      do updateState (first (mapInsert s n))
                          return $! PTyComb (UTyVar False s n) tys
                   Right c'@(UTyVar _ _ n) ->
                     if n == length tys
@@ -173,7 +173,7 @@ patomty =
             case c of
               Left c'@(UTyVar _ s 0) ->
                 -- fresh ty-op of zero arity
-                do updateState (\ (ops, y) -> (mapInsert s 0 ops, y))
+                do updateState (first (mapInsert s 0))
                    return $! PTyComb c' []
               Right c'@(UTyVar _ _ 0) ->
                    return $! PTyComb c' []

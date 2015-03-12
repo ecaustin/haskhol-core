@@ -95,7 +95,7 @@ ppTerm prec tm =
 -- numeral case
     (integer #<< destNumeral tm) <|>
 -- List case
-    (brackets $ ppTermSeq ";" 0 #<< destList tm) <|>
+    brackets (ppTermSeq ";" 0 #<< destList tm) <|>
 -- Type combination case
     (ppTyComb prec #<< destTyComb tm) <|>
 -- Let case
@@ -211,7 +211,7 @@ nameOf _ = textEmpty
 
 reverseInterface :: Text -> HOLType -> HOL cls thry Text
 reverseInterface s0 ty0 =
-    do fl <- getBenignFlag (FlagRevInterface)
+    do fl <- getBenignFlag FlagRevInterface
        if not fl
           then return s0
           else do iface <- getInterface
@@ -237,7 +237,7 @@ ppTyComb prec (t, ty) =
       if prec == 1000 then parens base else base
 
 ppLet :: Int -> ([(HOLTerm, HOLTerm)], HOLTerm) -> HOL cls thry Doc
-ppLet prec ((eq:eqs), bod) =
+ppLet prec (eq:eqs, bod) =
     let base = (text "let" <+> 
                 foldr (\ eq' acc -> acc <+> text "and" <+> 
                                     ppLet' eq') (ppLet' eq) eqs <+>

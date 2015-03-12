@@ -45,10 +45,12 @@ import Language.Haskell.TH.Quote
 baseQuoter :: CtxtName thry => TheoryPath thry -> QuasiQuoter
 baseQuoter thry = QuasiQuoter quoteBaseExps nothing nothing nothing
     where quoteBaseExps :: String -> Q Exp 
-          quoteBaseExps (':':x) = liftProtectedExp =<< runIO
-            (runHOLProof (liftM (protect thry) . toHTy $ pack x) thry)
-          quoteBaseExps x = liftProtectedExp =<< runIO 
-            (runHOLProof (liftM (protect thry) . toHTm $ pack x) thry)
+          quoteBaseExps x = 
+              let x' = textStrip $ pack x
+                  comp f = liftProtectedExp =<< runIO (runHOLProof False 
+                             (liftM (protect thry) f) thry) in
+                if textHead x' == ':' then comp (toHTy $ textTail x')
+                else comp (toHTm x')
           nothing _ = fail "quoting here not supported"
 
 {-| 
