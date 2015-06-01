@@ -32,6 +32,8 @@ module HaskHOL.Core.Parser.Lib
     , ParseError
     , ParseContext
     , runHOLParser
+    , parseContext
+    , initParseContext
     , runParser
     , langDef
     , lexer
@@ -88,10 +90,6 @@ module HaskHOL.Core.Parser.Lib
     , prioritizeOverload
     , getInterface
     , getOverloads
-      -- * Type Abbreviations
-    , newTypeAbbrev
-    , removeTypeAbbrev
-    , typeAbbrevs
       -- * Hidden Constant Mapping 
     , hideConstant
     , unhideConstant
@@ -127,8 +125,6 @@ import Text.Parsec.Language
 import Text.Parsec.Token
 
 import Control.Lens hiding (op)
-
-import {-# SOURCE #-} HaskHOL.Core.Parser.Rep
 
 -- new flags and extensions
 {-| 
@@ -206,31 +202,6 @@ getOverload =
        return xs
 
 makeAcidic ''Overload ['insertOverload, 'getOverload]
-
-
-data TypeAbbreviations = TypeAbbreviations !(Map Text HOLType) 
-    deriving Typeable
-
-deriveSafeCopy 0 'base ''TypeAbbreviations
-
-insertTypeAbbreviation :: Text -> HOLType -> Update TypeAbbreviations ()
-insertTypeAbbreviation x ty =
-    do (TypeAbbreviations xs) <- get
-       put (TypeAbbreviations (mapInsert x ty xs))
-
-removeTypeAbbreviation :: Text -> Update TypeAbbreviations ()
-removeTypeAbbreviation x =
-    do (TypeAbbreviations xs) <- get
-       put (TypeAbbreviations (x `mapDelete` xs))
-
-getTypeAbbreviations :: Query TypeAbbreviations (Map Text HOLType)
-getTypeAbbreviations =
-    do (TypeAbbreviations xs) <- ask
-       return xs
-
-makeAcidic ''TypeAbbreviations 
-    ['insertTypeAbbreviation, 'removeTypeAbbreviation, 'getTypeAbbreviations]
-
 
 data Hidden = Hidden [Text] deriving Typeable
 
@@ -658,41 +629,6 @@ getOverloads =
        ovrlds <- queryHOL acid GetOverload
        closeAcidStateHOL acid
        return ovrlds
-
--- Type Abbreviations
-{-| 
-  Specifies a 'Text' to act as an abbreviation for a given type in the parser.
-  Upon recognizing the abbreviation the parser will replace it with the 
-  'PreType' value for it's associated 'HOLType' such that the elaborator can
-  infer the correct type for polymorphic abbreviations.
--}
-newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
-newTypeAbbrev s pty =
-    do ty <- toHTy pty
-       acid <- openLocalStateHOL (TypeAbbreviations mapEmpty)
-       updateHOL acid (InsertTypeAbbreviation s ty)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Specifies a 'Text' for the parser to stop recognizing as a type 
-  abbreviation.
--}
-removeTypeAbbrev :: Text -> HOL Theory thry ()
-removeTypeAbbrev s =
-    do acid <- openLocalStateHOL (TypeAbbreviations mapEmpty)
-       updateHOL acid (RemoveTypeAbbreviation s)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Returns all 'Text's currently acting as type abbreviations in the parser
-  paired with their associated types.
--}
-typeAbbrevs :: HOL cls thry (Map Text HOLType)
-typeAbbrevs =
-    do acid <- openLocalStateHOL (TypeAbbreviations mapEmpty)
-       abvs <- queryHOL acid GetTypeAbbreviations
-       closeAcidStateHOL acid
-       return abvs
 
 -- Hidden Constant Mapping
 -- | Specifies a 'Text' for the parser to stop recognizing as a constant.

@@ -24,7 +24,6 @@ import HaskHOL.Core.State
 
 import HaskHOL.Core.Ext.Protected
 
-import HaskHOL.Core.Parser.Prims (parseContext)
 import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.Elab
 import HaskHOL.Core.Parser.TypeParser

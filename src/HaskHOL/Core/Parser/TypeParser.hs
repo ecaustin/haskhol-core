@@ -51,7 +51,7 @@ module HaskHOL.Core.Parser.TypeParser
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Parser.Lib hiding (typeAbbrevs)
+import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.Prims (typeConstants, typeAbbrevs)
 import HaskHOL.Core.Kernel.Types (destTypeOp)
 

@@ -39,6 +39,7 @@ library
                    , text >= 1.2
                    , text-show >= 0.6
                    , th-lift >= 0.7
+                   , th-lift-instances >= 0.1
                    , unordered-containers >= 0.2
                    , wl-pprint-text >= 1.1
 

@@ -24,6 +24,7 @@
 -}
 module HaskHOL.Core.Ext.Protected
     ( Protected
+    , PData
     , protect
     , protectM
     , serve
@@ -38,6 +39,8 @@ module HaskHOL.Core.Ext.Protected
 
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
+
+import HaskHOL.Core.Parser.Prims
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax (Lift(..))
@@ -76,6 +79,15 @@ class Lift a => Protected a where
     unsafeProtect :: a -> PData a thry
     liftTy :: a -> Type
     protLift :: PData a thry -> Q Exp
+
+instance Protected ParseContext where
+    data PData ParseContext thry = PPC ParseContext
+    protect _ = PPC
+    serve (PPC pc) = return pc
+    unsafeServe (PPC pc) = pc
+    unsafeProtect = PPC
+    liftTy _ = ConT ''ParseContext
+    protLift (PPC pc) = conE 'ParseContext `appE` lift pc
 
 instance Protected HOLThm where
     data PData HOLThm thry = PThm HOLThm

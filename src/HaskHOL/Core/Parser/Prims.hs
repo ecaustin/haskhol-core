@@ -7,6 +7,9 @@ import HaskHOL.Core.State
 
 import Control.Lens
 
+import Language.Haskell.TH.Lift
+import Instances.TH.Lift()
+
 import qualified Text.Parsec as P
 
 -- | Parsed, but pre-elaborated HOL types.
@@ -45,6 +48,8 @@ data ParseContext = ParseContext
     , _infixes :: ![(Text, (Int, Text))]
     , _interface :: ![(Text, (Text, HOLType))]
     } deriving Typeable
+
+deriveLift ''ParseContext
 
 makeLenses ''ParseContext
 

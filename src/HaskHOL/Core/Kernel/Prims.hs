@@ -63,6 +63,7 @@ import Data.Hashable
 import GHC.Generics
 
 import Language.Haskell.TH.Lift
+import Instances.TH.Lift()
 
 {-
   A quick note on how the primitive data types of HaskHOL are implemented -- 
@@ -332,8 +333,5 @@ deriveSafeCopy 0 'base ''HOLType
 deriveSafeCopy 0 'base ''ConstTag
 deriveSafeCopy 0 'base ''HOLTerm
 deriveSafeCopy 0 'base ''HOLThm
-
-instance Lift Text where
-  lift t = [| pack $(lift $ unpack t) |]
 
 deriveLiftMany [''TypeOp, ''HOLType, ''ConstTag, ''HOLTerm, ''HOLThm]
