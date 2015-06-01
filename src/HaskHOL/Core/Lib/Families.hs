@@ -24,7 +24,6 @@ type instance a || 'True  = 'True
 type instance 'False || a = a
 type instance a || 'False = a
 
-
 -- | Type family conjunction.
 type family ((a :: Bool) && (b :: Bool)) :: Bool
 type instance 'True  && a = a

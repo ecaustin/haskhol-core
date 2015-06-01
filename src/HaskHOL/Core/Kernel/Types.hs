@@ -93,6 +93,7 @@ module HaskHOL.Core.Kernel.Types
     , containsUType
     , variantTyVar
     , variantTyVars
+    , initTypeConstants
     ) where
 
 import HaskHOL.Core.Lib
@@ -293,7 +294,7 @@ typeTypeSubst tyenv t =
 -- | Alias to the primitive boolean type.
 {-# INLINEABLE tyBool #-}
 tyBool :: HOLType
-tyBool = fromRight $ tyApp tyOpBool []
+tyBool = TyAppIn tyOpBool []
 
 -- | The pattern synonym equivalent of 'tyBool'.
 pattern TyBool <- TyApp TyOpBool []
@@ -628,6 +629,8 @@ variantTyVars avoid (tv:tvs) =
     let tv' = variantTyVar avoid tv in
       tv : variantTyVars (tv':avoid) tvs
 
+initTypeConstants :: Map Text TypeOp
+initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
 
 -- Documentation copied from HaskHOL.Core.Prims
 

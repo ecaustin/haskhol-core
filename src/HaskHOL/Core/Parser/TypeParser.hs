@@ -47,28 +47,32 @@
 -}
 module HaskHOL.Core.Parser.TypeParser 
     ( ptype
-    , psmall
+    , holTypeParser
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Parser.Lib
-import HaskHOL.Core.State (getTypeArity)
+import HaskHOL.Core.Parser.Lib hiding (typeAbbrevs)
+import HaskHOL.Core.Parser.Prims (typeConstants, typeAbbrevs)
+import HaskHOL.Core.Kernel.Types (destTypeOp)
 
-import Control.Monad.Trans (lift)
+import Control.Lens (view)
 
--- | Parser for HOL types.
-ptype :: MyParser cls thry PreType
+-- | Parser for 'HOLType's.
+holTypeParser :: ParseContext -> Text -> Either String PreType
+holTypeParser = runHOLParser ptype
+
+-- | Parse method for HOL types.
+ptype :: MyParser PreType
 ptype = 
     mywhiteSpace >> (putype <|> pbinty "->" "fun" psumty ptype)
 
--- | Parser for small type variables.
-psmall :: MyParser cls thry PreType
+psmall :: MyParser PreType
 psmall =
     do myreservedOp "'"
        x <- myidentifier
        return $! UTyVar True x 0
 
-popvar :: MyParser cls thry (Either PreType PreType)
+popvar :: MyParser (Either PreType PreType)
 popvar =
     do myreservedOp "_"
        x <- myidentifier
@@ -79,13 +83,13 @@ popvar =
          Right is existing.
        -}
        let x' = '_' `cons` x
-       (opvars, _) <- getState
+       (opvars, _, _) <- getState
        case mapLookup x' opvars of
          Nothing -> return . Left $ UTyVar False x' 0
          Just n -> return . Right $ UTyVar False x' n
 
-pbinty :: String -> Text -> MyParser cls thry PreType 
-       -> MyParser cls thry PreType -> MyParser cls thry PreType
+pbinty :: String -> Text -> MyParser PreType -> MyParser PreType 
+       -> MyParser PreType
 pbinty op name pty1 pty2 =
     do ty1 <- pty1
        (do myreservedOp op
@@ -93,7 +97,7 @@ pbinty op name pty1 pty2 =
            return $! PTyComb (PTyCon name) [ty1, ty2]) 
         <|> return ty1
 
-putype :: MyParser cls thry PreType
+putype :: MyParser PreType
 putype = 
     do myreservedOp "%"
        tvs <- mymany1 psmall
@@ -101,16 +105,16 @@ putype =
        ty <- ptype
        return $! foldr PUTy ty tvs
 
-psumty :: MyParser cls thry PreType
+psumty :: MyParser PreType
 psumty = pbinty "+" "sum" pprodty psumty
 
-pprodty :: MyParser cls thry PreType
+pprodty :: MyParser PreType
 pprodty = pbinty "#" "prod" ppowty pprodty
 
-ppowty :: MyParser cls thry PreType
+ppowty :: MyParser PreType
 ppowty = pbinty "^" "cart" pappty ppowty
 
-pappty :: MyParser cls thry PreType
+pappty :: MyParser PreType
 pappty =
     do tys <- myparens $ mycommaSep1 ptype
        (do c <- popvar
@@ -118,7 +122,8 @@ pappty =
              Left (UTyVar _ s _) ->
                -- fresh ty op var so add it to state
                let n = length tys in
-                 do updateState (first (mapInsert s n))
+                 do updateState (\ (ops, cnt, ctxt) -> 
+                                     (mapInsert s n ops, cnt, ctxt))
                     let c' = UTyVar False s n
                     return $! PTyComb c' tys
              Right c'@(UTyVar _ _ n) ->
@@ -129,7 +134,7 @@ pappty =
              _ -> fail $ "type parser: unrecognized case for type operator " ++
                          "variable")
         <|> ((do x <- myidentifier
-                 ar <- lift $ can' getTypeArity x
+                 ar <- getTypeArity' x
                  case ar of
                    Nothing -> fail $ "type parser: unsupported type " ++
                                      "variable application."
@@ -146,7 +151,8 @@ pappty =
                  case c of
                   Left (UTyVar _ s _) ->
                     let n = length tys in
-                      do updateState (first (mapInsert s n))
+                      do updateState (\ (ops, cnt, ctxt) -> 
+                                          (mapInsert s n ops, cnt, ctxt))
                          return $! PTyComb (UTyVar False s n) tys
                   Right c'@(UTyVar _ _ n) ->
                     if n == length tys
@@ -155,7 +161,7 @@ pappty =
                   _ -> fail "type parser: unrecognized case for type operator.")
    <|> (do ty <- patomty
            mytry (do x <- myidentifier
-                     ar <- lift $ can' getTypeArity x
+                     ar <- getTypeArity' x
                      case ar of
                        Nothing -> fail $ "type parser: unrecognized constant" 
                                          ++ " in unary application."
@@ -166,27 +172,33 @@ pappty =
                                        ++ " application")
             <|> return ty)
 
-patomty :: MyParser cls thry PreType
+patomty :: MyParser PreType
 patomty = 
     psmall
     <|> (do c <- popvar
             case c of
               Left c'@(UTyVar _ s 0) ->
                 -- fresh ty-op of zero arity
-                do updateState (first (mapInsert s 0))
+                do updateState (\ (ops, cnt, ctxt) -> 
+                                    (mapInsert s 0 ops, cnt, ctxt))
                    return $! PTyComb c' []
               Right c'@(UTyVar _ _ 0) ->
                    return $! PTyComb c' []
               _ -> fail $ "type parser: type operator variable of non-zero " ++
                           "arity outside of application")
     <|> (do x <- myidentifier
-            tyabv <- lift $ liftM (mapLookup x) typeAbbrevs
-            case tyabv of
+            tyabvs <- gets $ view typeAbbrevs
+            case mapLookup x tyabvs of
               Just ty -> return $! pretypeOfType ty
               Nothing ->
-                do cond <- lift $ can' getTypeArity x
+                do cond <- getTypeArity' x
                    case cond of
                      Nothing -> return $! UTyVar False x 0
                      Just 0 -> return $! PTyComb (PTyCon x) []
                      _ -> fail "type parser: bad type construction")
 
+-- Pure versions of stateful methods
+getTypeArity' :: Text -> MyParser (Maybe Int)
+getTypeArity' x =
+    do tys <- gets $ view typeConstants
+       return . liftM (snd . destTypeOp) $ mapLookup x tys

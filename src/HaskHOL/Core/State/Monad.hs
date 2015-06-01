@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE ConstraintKinds, DataKinds, EmptyDataDecls, ScopedTypeVariables, 
              TypeFamilies, TypeOperators, UndecidableInstances #-}
 {-|
@@ -101,7 +102,7 @@ import Language.Haskell.TH.Syntax (lift, Module(..), modString)
 import Prelude hiding (FilePath)
 import Paths_haskhol_core
 import Shelly hiding (put, get)
-import Filesystem.Path (dirname)
+--import Filesystem.Path (dirname)
 import System.FilePath (combine)
 import Data.Text (pack)
 
@@ -609,7 +610,7 @@ modifyHOLRef ref f = HOL $ \ _ _ _ -> modifyIORef ref f
 -- used internally by openLocalStateHOL and openLocalStateHOLBase
 -- Loops on locking error
 blockingOpen :: IsAcidic st => String -> st -> IO (AcidState st) 
-blockingOpen dir st = open 0
+blockingOpen dir st = open (0::Integer)
     where open n = 
               openLocalStateFrom dir st `catchIOError` 
               (\ e -> if isAlreadyInUseError e && n < 100

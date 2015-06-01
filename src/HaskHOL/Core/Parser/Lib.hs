@@ -30,7 +30,9 @@ module HaskHOL.Core.Parser.Lib
     , pretypeOfType
     , MyParser
     , ParseError
-    , runParserT
+    , ParseContext
+    , runHOLParser
+    , runParser
     , langDef
     , lexer
     , mysymbol
@@ -103,6 +105,7 @@ module HaskHOL.Core.Parser.Lib
     , getPrebrokenBinops
       -- * Parser state manipulations
     , getState
+    , gets
     , setState
     , updateState
     ) where
@@ -111,13 +114,19 @@ import HaskHOL.Core.Lib hiding ((<?>))
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics
-import HaskHOL.Core.Parser.Prims
 
-import Text.Parsec hiding (runParserT, setState, getState, updateState
+import HaskHOL.Core.Parser.Prims hiding 
+    (binders, tyBinders, prefixes, infixes, typeAbbrevs)
+import qualified HaskHOL.Core.Parser.Prims as Prims 
+    (binders, tyBinders, prefixes, infixes)
+
+import Text.Parsec hiding (runParser, setState, getState, updateState
                           ,ParseError, (<|>))
 import qualified Text.Parsec as P
 import Text.Parsec.Language
 import Text.Parsec.Token
+
+import Control.Lens hiding (op)
 
 import {-# SOURCE #-} HaskHOL.Core.Parser.Rep
 
@@ -153,107 +162,6 @@ newFlag "FlagRevInterface" True
   to just the conclusion term.
 -}
 newFlag "FlagPrintAllThm" True
-
-data BinderOps = BinderOps ![Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''BinderOps
-
-initBinderOps :: [Text]
-initBinderOps = ["\\"]
-
-insertBinder :: Text -> Update BinderOps ()
-insertBinder op =
-    do (BinderOps ops) <- get
-       put (BinderOps (op:ops))
-
-removeBinder :: Text -> Update BinderOps ()
-removeBinder op =
-    do (BinderOps ops) <- get
-       put (BinderOps (op `delete` ops))
-
-getBinders :: Query BinderOps [Text]
-getBinders =
-    do (BinderOps ops) <- ask
-       return ops
-
-makeAcidic ''BinderOps ['insertBinder, 'removeBinder, 'getBinders]
-
-
-data TyBinderOps = TyBinderOps ![Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''TyBinderOps
-
-initTyBinderOps :: [Text]
-initTyBinderOps = ["\\\\"]
-
-insertTyBinder :: Text -> Update TyBinderOps ()
-insertTyBinder op =
-    do (TyBinderOps ops) <- get
-       put (TyBinderOps (op:ops))
-
-removeTyBinder :: Text -> Update TyBinderOps ()
-removeTyBinder op =
-    do (TyBinderOps ops) <- get
-       put (TyBinderOps (op `delete` ops))
-
-getTyBinders :: Query TyBinderOps [Text]
-getTyBinders =
-    do (TyBinderOps ops) <- ask
-       return ops
-
-makeAcidic ''TyBinderOps ['insertTyBinder, 'removeTyBinder, 'getTyBinders]
-
-data PrefixOps = PrefixOps ![Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''PrefixOps
-
-insertPrefix :: Text -> Update PrefixOps ()
-insertPrefix op =
-    do (PrefixOps ops) <- get
-       put (PrefixOps (op:ops))
-
-removePrefix :: Text -> Update PrefixOps ()
-removePrefix op =
-    do (PrefixOps ops) <- get
-       put (PrefixOps (op `delete` ops))
-
-getPrefixes :: Query PrefixOps [Text]
-getPrefixes =
-    do (PrefixOps ops) <- ask
-       return ops
-
-makeAcidic ''PrefixOps ['insertPrefix, 'removePrefix, 'getPrefixes]
-
-data InfixOps = InfixOps ![(Text, (Int, Text))] deriving Typeable
-
-deriveSafeCopy 0 'base ''InfixOps
-
-initInfixOps :: [(Text, (Int, Text))]
-initInfixOps = [("=", (12, "right"))]
-
-insertInfix :: (Text, (Int, Text)) -> Update InfixOps ()
-insertInfix i@(n, _) =
-    do (InfixOps is) <- get 
-       let is' = case find (\ (n', _) -> n == n') is of
-                   Just _ -> is
-                   _ -> 
-                       sort (\ (s, (x, a)) (t, (y, b)) ->
-                         x < y || x == y && a > b || x == y && a == b && s < t)
-                         (i:is)
-       put (InfixOps is')
-
-removeInfix :: Text -> Update InfixOps ()
-removeInfix op =
-    do (InfixOps ops) <- get
-       put (InfixOps (filter (\ (x, _) -> x /= op) ops))
-
-getInfixes :: Query InfixOps [(Text, (Int, Text))]
-getInfixes =
-    do (InfixOps ops) <- ask
-       return ops
-
-makeAcidic ''InfixOps ['insertInfix, 'removeInfix, 'getInfixes]
-
 
 data Interface = Interface ![(Text, (Text, HOLType))] deriving Typeable
 
@@ -417,7 +325,14 @@ pretypeOfType _ = error "pretypeOfType: exhaustive warning."
   in a term have the same arity.  The counter is used to generate fresh names
   in a term.
 -}
-type MyParser cls thry = ParsecT Text (Map Text Int, Int) (HOL cls thry)
+type MyParser = Parsec Text (Map Text Int, Int, ParseContext)
+
+{-| Runs a custom parser when provided with an input 'String' and a 
+    'HOLContext'.
+-}
+runHOLParser :: MyParser a -> ParseContext -> Text -> Either String a
+runHOLParser parser ctxt input =
+    either (Left . show) return $ runParser parser (mapEmpty, 0, ctxt) "" input
 
 -- | The Parsec 'LanguageDef' for HaskHOL.
 langDef :: Monad m => GenLanguageDef Text st m
@@ -438,63 +353,63 @@ langDef = LanguageDef
     }
 
 -- | The Parsec token parser for HaskHOL.
-lexer :: GenTokenParser Text (Map Text Int, Int) (HOL cls thry)
+lexer :: GenTokenParser Text (Map Text Int, Int, ParseContext) Identity
 lexer = makeTokenParser langDef
 
 -- | A version of 'symbol' for our language.
-mysymbol :: String -> MyParser cls thry Text
+mysymbol :: String -> MyParser Text
 mysymbol = liftM pack . symbol lexer
 
 -- | A version of 'parens' for our language.
-myparens :: MyParser cls thry a -> MyParser cls thry a
+myparens :: MyParser a -> MyParser a
 myparens = parens lexer
 
 -- | A version of 'braces' for our language.
-mybraces :: MyParser cls thry a -> MyParser cls thry a
+mybraces :: MyParser a -> MyParser a
 mybraces = braces lexer
 
 -- | A version of 'brackets' for our language.
-mybrackets :: MyParser cls thry a -> MyParser cls thry a
+mybrackets :: MyParser a -> MyParser a
 mybrackets = brackets lexer
 
 -- | A version of 'commaSep1' for our language.
-mycommaSep1 :: MyParser cls thry a -> MyParser cls thry [a]
+mycommaSep1 :: MyParser a -> MyParser [a]
 mycommaSep1 = commaSep1 lexer
 
 -- | A version of 'semiSep' for our language.
-mysemiSep :: MyParser cls thry a -> MyParser cls thry [a]
+mysemiSep :: MyParser a -> MyParser [a]
 mysemiSep = semiSep lexer
 
 -- | A version of 'semiSep1' for our language.
-mysemiSep1 :: MyParser cls thry a -> MyParser cls thry [a]
+mysemiSep1 :: MyParser a -> MyParser [a]
 mysemiSep1 = semiSep1 lexer
 
 -- | A version of 'reserved' for our language.
-myreserved :: String -> MyParser cls thry ()
+myreserved :: String -> MyParser ()
 myreserved = reserved lexer
 
 -- | A version of 'identifier' for our language.
-myidentifier :: MyParser cls thry Text
+myidentifier :: MyParser Text
 myidentifier = liftM pack $ identifier lexer
 
 -- | A version of 'integer' for our language.
-myinteger :: MyParser cls thry Integer
+myinteger :: MyParser Integer
 myinteger = integer lexer
 
 -- | A version of 'operator' for our language.
-myoperator :: MyParser cls thry Text
+myoperator :: MyParser Text
 myoperator = liftM pack $ operator lexer
 
 -- | A version of 'reservedOp' for our language.
-myreservedOp :: String -> MyParser cls thry ()
+myreservedOp :: String -> MyParser ()
 myreservedOp = reservedOp lexer
 
 -- | Selects the first matching symbol.
-choiceSym :: [String] -> MyParser cls thry Text
+choiceSym :: [String] -> MyParser Text
 choiceSym ops = choice $ map mysymbol ops
 
 -- | Selects the first matching reserved operator.
-choiceId :: [Text] -> MyParser cls thry Text
+choiceId :: [Text] -> MyParser Text
 choiceId ops = choice $ map 
                (\ s -> try $ do s' <- myidentifier <|> myoperator
                                 if s' == s
@@ -502,135 +417,101 @@ choiceId ops = choice $ map
                                    else fail "choiceId") ops
 
 -- | A version of 'whiteSpace' for our language.
-mywhiteSpace :: MyParser cls thry ()
+mywhiteSpace :: MyParser ()
 mywhiteSpace = whiteSpace lexer
 
 -- | A re-export of 'P.many'.
-mymany :: MyParser cls thry a -> MyParser cls thry [a]
+mymany :: MyParser a -> MyParser [a]
 mymany = P.many
 
 -- | A re-export of 'P.many1'.
-mymany1 :: MyParser cls thry a -> MyParser cls thry [a]
+mymany1 :: MyParser a -> MyParser [a]
 mymany1 = P.many1
 
 -- | A re-export of 'P.sepBy1'.
-mysepBy1 :: MyParser cls thry a -> MyParser cls thry b -> MyParser cls thry [a]
+mysepBy1 :: MyParser a -> MyParser b -> MyParser [a]
 mysepBy1 = P.sepBy1
 
 -- | A re-export of 'P.try'.
-mytry :: MyParser cls thry a -> MyParser cls thry a
+mytry :: MyParser a -> MyParser a
 mytry = P.try
 
 -- | Specifies a 'Text' to be recognized as a term binder by the parser.
 parseAsBinder :: Text -> HOL Theory thry ()
-parseAsBinder op =
-    do acid <- openLocalStateHOL (BinderOps initBinderOps)
-       updateHOL acid (InsertBinder op)
-       createCheckpointAndCloseHOL acid
+parseAsBinder op = overParseContext Prims.binders (\ ops -> nub (op : ops))
 
 -- | Specifies a 'Text' to be recognized as a type binder by the parser.
 parseAsTyBinder :: Text -> HOL Theory thry ()
-parseAsTyBinder op =
-    do acid <- openLocalStateHOL (TyBinderOps initTyBinderOps)
-       updateHOL acid (InsertTyBinder op)
-       createCheckpointAndCloseHOL acid
+parseAsTyBinder op = overParseContext Prims.tyBinders (\ ops -> nub (op : ops))
 
 -- | Specifies a 'Text' to be recognized as a prefix operator by the parser.
 parseAsPrefix :: Text -> HOL Theory thry ()
-parseAsPrefix op =
-    do acid <- openLocalStateHOL (PrefixOps [])
-       updateHOL acid (InsertPrefix op)
-       createCheckpointAndCloseHOL acid
+parseAsPrefix op = overParseContext Prims.prefixes (\ ops -> nub (op : ops))
 
 {-| 
   Specifies a 'Text' to be recognized as an infix operator by the parser with
   a given precedence level and associativity.
 -}
 parseAsInfix :: (Text, (Int, Text)) -> HOL Theory thry ()
-parseAsInfix op =
-    do acid <- openLocalStateHOL (InfixOps initInfixOps)
-       updateHOL acid (InsertInfix op)
-       createCheckpointAndCloseHOL acid
+parseAsInfix i@(n, _) = overParseContext Prims.infixes insertFun
+  where insertFun :: [(Text, (Int, Text))] -> [(Text, (Int, Text))]
+        insertFun is
+            | isJust (find (\ (n', _) -> n == n') is) = is
+            | otherwise = flip sort (i:is) (\ (s, (x, a)) (t, (y, b)) ->
+                  x < y || x == y && a > b || x == y && a == b && s < t)
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a term binder.
 unparseAsBinder :: Text -> HOL Theory thry ()
-unparseAsBinder op =
-    do acid <- openLocalStateHOL (BinderOps initBinderOps)
-       updateHOL acid (RemoveBinder op)
-       createCheckpointAndCloseHOL acid
+unparseAsBinder op = overParseContext Prims.binders (delete op)
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a type binder.
 unparseAsTyBinder :: Text -> HOL Theory thry ()
-unparseAsTyBinder op =
-    do acid <- openLocalStateHOL (TyBinderOps initTyBinderOps)
-       updateHOL acid (RemoveTyBinder op)
-       createCheckpointAndCloseHOL acid
+unparseAsTyBinder op = overParseContext Prims.tyBinders (delete op)
 
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as a prefix operator.
 -}
 unparseAsPrefix :: Text -> HOL Theory thry ()
-unparseAsPrefix op =
-    do acid <- openLocalStateHOL (PrefixOps [])
-       updateHOL acid (RemovePrefix op)
-       createCheckpointAndCloseHOL acid
+unparseAsPrefix op = overParseContext Prims.prefixes (delete op)
 
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as an infix operator.
 -}
 unparseAsInfix :: Text -> HOL Theory thry ()
-unparseAsInfix op =
-    do acid <- openLocalStateHOL (InfixOps initInfixOps)
-       updateHOL acid (RemoveInfix op)
-       createCheckpointAndCloseHOL acid
+unparseAsInfix op = 
+    overParseContext Prims.infixes (filter (\ (x, _) -> x /= op))
 
 -- | Predicate for 'Text's recognized as term binders by the parser.
 parsesAsBinder :: Text -> HOL cls thry Bool
-parsesAsBinder op = liftM (elem op) binders
+parsesAsBinder op = testParseContext Prims.binders (elem op)
 
 -- | Predicate for 'Text's recognized as type binders by the parser.
 parsesAsTyBinder :: Text -> HOL cls thry Bool
-parsesAsTyBinder op = liftM (elem op) tyBinders
+parsesAsTyBinder op = testParseContext Prims.tyBinders (elem op)
 
 -- | Predicate for 'Text's recognized as prefix operators by the parser.
 parsesAsPrefix :: Text -> HOL cls thry Bool
-parsesAsPrefix op = liftM (elem op) prefixes
+parsesAsPrefix op = testParseContext Prims.prefixes (elem op)
 
 -- | Predicate for 'Text's recognized as infix operators by the parser.
 parsesAsInfix :: Text -> HOL cls thry Bool
-parsesAsInfix op = liftM (isJust . lookup op) infixes
+parsesAsInfix op = testParseContext Prims.infixes (isJust . lookup op)
 
 -- | Returns all binders defined in the context.
 binders :: HOL cls thry [Text]
-binders = 
-    do acid <- openLocalStateHOL (BinderOps initBinderOps)
-       binds <- queryHOL acid GetBinders
-       closeAcidStateHOL acid
-       return binds
+binders = viewParseContext Prims.binders
 
 -- | Returns all type binders defined in the context.
 tyBinders :: HOL cls thry [Text]
-tyBinders = 
-    do acid <- openLocalStateHOL (TyBinderOps initTyBinderOps)
-       binds <- queryHOL acid GetTyBinders
-       closeAcidStateHOL acid
-       return binds
+tyBinders = viewParseContext Prims.tyBinders
 
 -- | Returns all prefix operators defined in the context.
 prefixes :: HOL cls thry [Text]
-prefixes = 
-    do acid <- openLocalStateHOL (PrefixOps [])
-       pfxs <- queryHOL acid GetPrefixes
-       closeAcidStateHOL acid
-       return pfxs
+prefixes = viewParseContext Prims.prefixes
 
 -- | Returns all infix operators defined in the context.
 infixes :: HOL cls thry [(Text, (Int, Text))]
-infixes = 
-    do acid <- openLocalStateHOL (InfixOps initInfixOps)
-       ifxs <- queryHOL acid GetInfixes
-       closeAcidStateHOL acid
-       return ifxs
+infixes = viewParseContext Prims.infixes
 
 -- Interface
 {-|
@@ -918,13 +799,19 @@ getPrebrokenBinops =
 
 -- Re-exports
 -- | A re-export of 'P.runParserT'.
-runParserT :: Stream s m t => ParsecT s u m a -> u -> SourceName -> s 
-           -> m (Either ParseError a)
-runParserT = P.runParserT
+runParser :: Stream s Identity t => Parsec s u a -> u -> SourceName -> s 
+          -> Either ParseError a
+runParser = P.runParser
 
 -- | A re-export of 'P.getState'.
 getState :: Monad m => P.ParsecT s u m u
 getState = P.getState
+
+-- | A version of 'getState' that retrieves a specified field of the context.
+gets :: Monad m => (u3 -> a) -> P.ParsecT s (u1, u2, u3) m a
+gets f =
+    do (_, _, ctxt) <- getState
+       return $! f ctxt
 
 -- | A re-export of 'P.setState'.
 setState :: Monad m => u -> P.ParsecT s u m ()

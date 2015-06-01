@@ -172,7 +172,7 @@ buildThryType :: forall a thry. (Protected a, CtxtName thry) =>
                                 PData a thry -> Q Type
 buildThryType _ =
     do tyname <- newName "thry"
-       let cls = ClassP (mkName $ ctxtName (undefined::thry)) [VarT tyname]
+       let cls = ConT (mkName $ ctxtName (undefined::thry)) `AppT` (VarT tyname)
        return . ForallT [PlainTV tyname] [cls] . 
          AppT (AppT (ConT ''PData) $ liftTy (undefined :: a)) $ 
            VarT tyname

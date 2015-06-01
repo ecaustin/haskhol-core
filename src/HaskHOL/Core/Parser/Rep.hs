@@ -24,9 +24,11 @@ import HaskHOL.Core.State
 
 import HaskHOL.Core.Ext.Protected
 
+import HaskHOL.Core.Parser.Prims (parseContext)
 import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.Elab
-import {-# SOURCE #-} HaskHOL.Core.Parser (holTermParser, holTypeParser)
+import HaskHOL.Core.Parser.TypeParser
+import HaskHOL.Core.Parser.TermParser
 
 import Data.String
 
@@ -50,7 +52,8 @@ class HOLTypeRep a cls thry where
     toHTy :: a -> HOL cls thry HOLType
 
 instance (IsString a, a ~ Text) => HOLTypeRep a cls thry where
-    toHTy = tyElab <=< holTypeParser
+    toHTy x = do ctxt <- parseContext 
+                 tyElab #<< holTypeParser ctxt x
 
 instance thry1 ~ thry2 => HOLTypeRep (PType thry1) cls thry2 where
     toHTy = serve
@@ -94,7 +97,8 @@ instance thry1 ~ thry2 => HOLTermRep (PTerm thry1) cls thry2 where
     toHTm = serve
 
 instance (IsString a, a~Text) => HOLTermRep a cls thry where
-    toHTm = elab <=< holTermParser
+    toHTm x = do ctxt <- parseContext 
+                 elab #<< holTermParser ctxt x
                 
 instance HOLTermRep PreTerm cls thry where
     toHTm = elab

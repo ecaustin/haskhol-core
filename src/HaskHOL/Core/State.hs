@@ -78,9 +78,6 @@ getTypeConstants =
 makeAcidic ''TypeConstants 
     ['insertTypeConstant, 'getTypeConstants]
 
-initTypeConstants :: Map Text TypeOp
-initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
-
 
 data TypeDefinitions = TypeDefinitions !(Map Text (HOLThm, HOLThm)) 
     deriving Typeable
@@ -122,9 +119,6 @@ getTermConstants =
 
 makeAcidic ''TermConstants 
     ['insertTermConstant, 'getTermConstants]
-
-initTermConstants :: Map Text HOLTerm
-initTermConstants = mapFromList [("=", tmEq tyA)]
 
 data TheAxioms = TheAxioms !(Map Text HOLThm) deriving Typeable
 
@@ -346,15 +340,15 @@ mkConstFull name pat =
          instConstFull tm pat
                                     
 {-| 
-  Safely creates an equality between two terms using 'mkConst' using the type of
-  the left hand side argument to perform the required instantiation.  Throws a
-  'HOLException' in the case when the types of the two terms do not agree.
+  Safely creates an equality between two terms using the left hand side argument
+  to perform the required instantiation.  Throws a 'HOLException' in the case 
+  when the types of the two terms do not agree.
 -}
 mkEq :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkEq l r =
-    let ty = typeOf l in
-      do eq <- mkConst "=" [(tyA, ty)]
-         liftM1 mkComb (mkComb eq l) r <#?> "mkEq"
+    let ty = typeOf l
+        eq = tmEq ty in
+      liftM1 mkComb (mkComb eq l) r <#?> "mkEq"
 
 -- State for Axioms     
 

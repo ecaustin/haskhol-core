@@ -253,7 +253,8 @@ module HaskHOL.Core.Lib
 import HaskHOL.Core.Lib.Families
 
 -- Libraries re-exported in their entirety, except for applicative
-import Control.Applicative hiding (Const, WrappedMonad, WrappedArrow, ZipList)
+import Control.Applicative hiding 
+    ((<$>), Const, WrappedMonad, WrappedArrow, ZipList)
 import Control.DeepSeq
 import Control.Monad
 import Data.Maybe
@@ -1244,7 +1245,7 @@ numOfString s =
    where res :: [(a, String)]
          res = case s of
                  ('0':'x':s') -> readHex s'
-                 ('0':'b':s') -> readInt 2 (`elem` "01") digitToInt s'
+                 ('0':'b':s') -> readInt 2 (`elem` ['0','1']) digitToInt s'
                  _ -> readDec s
 
 -- Polymorphic, finite, partial functions via Patricia trees

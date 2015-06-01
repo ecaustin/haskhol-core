@@ -80,7 +80,7 @@ import Prelude hiding (FilePath)
   > type BoolType = ExtThry BoolThry BaseThry
   >
   > type family BoolContext a :: Bool where
-  >     BoolContext BaseThry = False
+  >     BoolContext BaseThry = (BaseThry == BoolThry)
   >     BoolContext (ExtThry a b) = (a == BoolThry) || (BoolContext b)
   >
   > type instance BoolThry == BoolThry = True
@@ -125,7 +125,7 @@ templateTypes _ lbl =
 -- build class and instances
         clsName = mkName $ upLbl ++ "Context"
         -- splices: type instance _Context BaseThry = False
-        famBase =TySynEqn [ConT ''BaseThry] $ PromotedT 'False
+        famBase =TySynEqn [ConT ''BaseThry] $ (PromotedT 'False)
         famCond = AppT (AppT (ConT ''(||))
                         (AppT (ConT clsName) bVar))
                    (AppT (AppT (ConT ''(==)) aVar) (ConT dataName))     

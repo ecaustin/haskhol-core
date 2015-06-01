@@ -337,4 +337,3 @@ instance Lift Text where
   lift t = [| pack $(lift $ unpack t) |]
 
 deriveLiftMany [''TypeOp, ''HOLType, ''ConstTag, ''HOLTerm, ''HOLThm]
-

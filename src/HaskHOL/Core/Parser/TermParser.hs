@@ -57,27 +57,33 @@
 -}
 module HaskHOL.Core.Parser.TermParser
     ( pterm
+    , holTermParser
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Parser.Lib
+import HaskHOL.Core.Parser.Lib hiding (binders, tyBinders, infixes, prefixes)
+import HaskHOL.Core.Parser.Prims 
+    (binders, tyBinders, infixes, prefixes, termConstants, interface)
 import HaskHOL.Core.Parser.TypeParser
-import HaskHOL.Core.State (getConstType)
 
-import Control.Monad.Trans (lift)
+import Control.Lens (view, views)
 
--- | Parser for HOL terms.
-pterm :: MyParser cls thry PreTerm
+-- | Parser for 'HOLTerm's.
+holTermParser :: ParseContext -> Text -> Either String PreTerm
+holTermParser = runHOLParser pterm
+
+-- | Parse method for HOL terms.
+pterm :: MyParser PreTerm
 pterm = 
     (do mywhiteSpace
         expressionParser ptyped)
     <|> (do s <- myidentifier <|> myoperator
             return $! PVar s dpty)
 
-ptyped :: MyParser cls thry PreTerm
+ptyped :: MyParser PreTerm
 ptyped = pas =<< pappl
 
-pappl :: MyParser cls thry PreTerm
+pappl :: MyParser PreTerm
 pappl = 
     (do p <- pprefix
         tm <- pappl
@@ -85,10 +91,10 @@ pappl =
     <|> do (tm:tms) <- mymany1 pbinder
            return $! foldr (flip PComb) tm (reverse tms)
 
-pprefix :: MyParser cls thry Text
-pprefix = choiceId =<< lift prefixes
+pprefix :: MyParser Text
+pprefix = choiceId =<< gets (view prefixes)
 
-pbinder :: MyParser cls thry PreTerm
+pbinder :: MyParser PreTerm
 pbinder = 
     (do myreserved "let"
         tms <- pterm `mysepBy1` myreserved "and"
@@ -97,13 +103,13 @@ pbinder =
         case mkLet tms bod of
           Nothing -> fail "pterm: invalid let construction"
           Just tm -> return tm)
-    <|> (do bind <- choiceId =<< lift binders
+    <|> (do bind <- choiceId =<< gets (view binders)
             (do vars <- mymany1 pvar
                 myreservedOp "."
                 bod <- pterm
                 return $! mkBinders bind vars bod)
              <|> (return $! PVar bind dpty))
-    <|> (do bind <- choiceId =<< lift tyBinders
+    <|> (do bind <- choiceId =<< gets (view tyBinders)
             (do vars <- mymany1 psmall
                 myreservedOp "."
                 bod <- pterm
@@ -112,30 +118,36 @@ pbinder =
     <|> pinst
     where 
 
-pinst :: MyParser cls thry PreTerm
+psmall :: MyParser PreType
+psmall =
+    do myreservedOp "'"
+       x <- myidentifier
+       return $! UTyVar True x 0
+
+pinst :: MyParser PreTerm
 pinst = 
     (do myreserved "TYINST"
         vars <- mymany1 pinst'
         tm <- patomic
         return $! PInst vars tm)
     <|> patomic
-    where pinst' :: MyParser cls thry (PreType, Text)
+    where pinst' :: MyParser (PreType, Text)
           pinst' = myparens $ do myreservedOp "_"
                                  x <- myidentifier
                                  myreservedOp ":"
                                  ty <- ptype
                                  return (ty, x)
                               
-pvar :: MyParser cls thry PreTerm
+pvar :: MyParser PreTerm
 pvar = pas =<< patomic
 
-pas :: PreTerm -> MyParser cls thry PreTerm
+pas :: PreTerm -> MyParser PreTerm
 pas tm =
     (do myreservedOp ":"
         ty <- ptype
         return $! PAs tm ty) <|> return tm
 
-patomic :: MyParser cls thry PreTerm
+patomic :: MyParser PreTerm
 patomic =
     myparens ((do myreservedOp ":"
                   ty <- ptype
@@ -180,38 +192,38 @@ patomic =
             c <- pclauses
             return $! PComb (PVar "_FUNCTION" dpty) c)  
     <|> mytry (do x <- myidentifier <|> myoperator
-                  cond1 <- lift $ parsesAsPrefix x
-                  cond2 <- lift $ parsesAsInfix x
-                  cond3 <- lift $ parsesAsBinder x
-                  cond4 <- lift $ parsesAsTyBinder x
-                  if not (cond1 || cond2 || cond3 || cond4)
-                     then return $! PVar x dpty
-                     else fail "patomic")
+                  ops1 <- gets $ view prefixes
+                  ops2 <- gets $ views infixes (map fst)
+                  ops3 <- gets $ view binders
+                  ops4 <- gets $ view tyBinders
+                  if or (map (x `elem`) [ops1, ops2, ops3, ops4])
+                     then fail "patomic"
+                     else return $! PVar x dpty)
 
-pclauses :: MyParser cls thry PreTerm
+pclauses :: MyParser PreTerm
 pclauses =
     do c <- pclause `mysepBy1` myreservedOp "|"
        return $! foldr1 (\ s t -> PComb (PComb (PVar "_SEQPATTERN" dpty) s) t) c
-  where pclause :: MyParser cls thry PreTerm
+  where pclause :: MyParser PreTerm
         pclause = do (pat:guards) <- pterm `mysepBy1` myreserved "when"
                      myreservedOp "->"
                      res <- pterm
                      mkPattern pat guards res
 
 -- helper functions
-pgenVar :: MyParser cls thry PreTerm
+pgenVar :: MyParser PreTerm
 pgenVar = 
-    do (ops, n) <- getState
-       setState (ops, succ n)
+    do (ops, n, ctxt) <- getState
+       setState (ops, succ n, ctxt)
        return $! PVar (pack $ "_GENPVAR_" ++ show n) dpty
 
-pfrees :: PreTerm -> [PreTerm] -> MyParser cls thry [PreTerm]
+pfrees :: PreTerm -> [PreTerm] -> MyParser [PreTerm]
 pfrees ptm@(PVar v pty) acc
     | textNull v && pty == dpty = return acc
     | otherwise = 
-          do cond1 <- lift $ can getConstType v
+          do cond1 <- getConstType' v
              let cond2 = isJust (numOfString (unpack v) :: Maybe Integer)
-             cond3 <- lift $ liftM (isJust . lookup v) getInterface
+             cond3 <- getInterface' v
              if cond1 || cond2 || cond3
                 then return acc
                 else return $! ptm `insert` acc
@@ -256,7 +268,7 @@ mkTyBinder n v bod = PComb (PVar n dpty) $ TyPAbs v bod
 mkTyBinders :: Text -> [PreType] -> PreTerm -> PreTerm
 mkTyBinders bind vars bod = foldr (mkTyBinder bind) bod vars
 
-mkPattern :: PreTerm -> [PreTerm] -> PreTerm -> MyParser cls thry PreTerm
+mkPattern :: PreTerm -> [PreTerm] -> PreTerm -> MyParser PreTerm
 mkPattern pat guards res =
     do x <- pgenVar
        y <- pgenVar
@@ -275,11 +287,10 @@ mkPattern pat guards res =
     
 
 -- build expression parser from infix operators in context
-expressionParser :: forall cls thry. MyParser cls thry PreTerm 
-                 -> MyParser cls thry PreTerm
-expressionParser prs = expressionParser' =<< lift infixes
+expressionParser :: MyParser PreTerm -> MyParser PreTerm
+expressionParser prs = expressionParser' =<< gets (view infixes)
     where expressionParser' :: [(Text, (Int, Text))] 
-                            -> MyParser cls thry PreTerm
+                            -> MyParser PreTerm
           expressionParser' [] = prs
           expressionParser' infxs@((_, (p, at)):_) =
               let (topins, rest) = partition (\ (_, pat') -> 
@@ -290,16 +301,15 @@ expressionParser prs = expressionParser' =<< lift infixes
                        (choiceId (map fst topins))
                        (\ op x y -> PComb (PComb (PVar op dpty) x) y)
 
-sepPair :: MyParser cls thry Text -> MyParser cls thry PreTerm 
-        -> MyParser cls thry [(Text, PreTerm)]
+sepPair :: MyParser Text -> MyParser PreTerm -> MyParser [(Text, PreTerm)]
 sepPair sep prs =
     mymany (do l <- sep
                r <- prs
                return (l, r))
 
-pRightBinary :: MyParser cls thry PreTerm -> MyParser cls thry Text
+pRightBinary :: MyParser PreTerm -> MyParser Text
              -> (Text -> PreTerm -> PreTerm -> PreTerm) 
-             -> MyParser cls thry PreTerm
+             -> MyParser PreTerm
 pRightBinary prs sep cns =
   do x <- prs
      opxs <- sepPair sep prs
@@ -310,9 +320,9 @@ pRightBinary prs sep cns =
                  Just res -> return res
                  _ -> fail "pRightBinary"
 
-pLeftBinary :: MyParser cls thry PreTerm -> MyParser cls thry Text
+pLeftBinary :: MyParser PreTerm -> MyParser Text
             -> (Text -> PreTerm -> PreTerm -> PreTerm) 
-            -> MyParser cls thry PreTerm
+            -> MyParser PreTerm
 pLeftBinary prs sep cns =
   do x <- prs
      opxs <- sepPair sep prs
@@ -320,3 +330,10 @@ pLeftBinary prs sep cns =
        case foldr2 (\ op l r -> cns op r l) x (reverse ops) (reverse xs) of
          Just res -> return res
          _ -> fail "pLeftBinary"
+
+-- pure versions of stateful methods
+getConstType' :: Text -> MyParser Bool
+getConstType' x = gets $ views termConstants (isJust . mapLookup x)
+
+getInterface' :: Text -> MyParser Bool
+getInterface' x = gets $ views interface (isJust . lookup x)

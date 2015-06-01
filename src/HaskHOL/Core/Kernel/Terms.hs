@@ -90,6 +90,7 @@ module HaskHOL.Core.Kernel.Terms
     , mkTyComb
     , destTyAbs
     , destTyComb
+    , initTermConstants
     ) where
 
 import HaskHOL.Core.Lib
@@ -635,6 +636,9 @@ destTyAbs _ = Nothing
 destTyComb :: HOLTerm -> Maybe (HOLTerm, HOLType)
 destTyComb (TyCombIn tm ty) = Just (tm, ty)
 destTyComb _ = Nothing
+
+initTermConstants :: Map Text HOLTerm
+initTermConstants = mapFromList [("=", tmEq tyA)]
 
 -- Documentation copied from HaskHOL.Core.Prims
 

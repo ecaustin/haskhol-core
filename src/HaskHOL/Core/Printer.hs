@@ -34,7 +34,8 @@ module HaskHOL.Core.Printer
     , printHOL
     ) where
 
-import HaskHOL.Core.Lib hiding ((<$>), empty, lefts, rights, base)
+import Prelude hiding ((<$>))
+import HaskHOL.Core.Lib hiding (empty, lefts, rights, base)
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics
@@ -351,7 +352,7 @@ ppComb prec (l, r) =
       if prec == 1000 then parens base else base
 
 -- Printer for Theorems
-	
+
 -- | Pretty printer for 'HOLThm's.	
 ppThm :: HOLThm -> HOL cls thry Doc
 ppThm (Thm [] c) = text "|-" <+> ppTerm 0 c
