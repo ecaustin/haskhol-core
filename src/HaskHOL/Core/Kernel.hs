@@ -469,7 +469,7 @@ axiomThm = ThmIn []
     the desired type of the constant.
 -} 
 newDefinedConst :: HOLTerm -> Either String (HOLTerm, HOLThm)
-newDefinedConst ((VarIn cname ty) := r)
+newDefinedConst (VarIn cname ty := r)
     | not $ freesIn [] r =
         Left "newDefinedConst: not closed"
     | not $ typeVarsInTerm r `subset` tyVars ty =

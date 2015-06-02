@@ -98,6 +98,6 @@ str = QuasiQuoter quoteStrExp nothing nothing nothing
     where quoteStrExp x = [| textStrip $ pack $(litE $ StringL x) |]
           nothing _ = fail "quoting here not supported"
 
-liftParseContext :: String -> Q Exp
+liftParseContext :: TheoryPath thry -> Q Exp
 liftParseContext ctxt =
-    lift =<< runIO (runHOLUnsafe' False parseContext ctxt [])
+    lift =<< runIO (runHOLProof False parseContext ctxt)

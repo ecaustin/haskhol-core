@@ -61,9 +61,8 @@ module HaskHOL.Core.Parser.TermParser
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Parser.Lib hiding (binders, tyBinders, infixes, prefixes)
-import HaskHOL.Core.Parser.Prims 
-    (binders, tyBinders, infixes, prefixes, termConstants, interface)
+import HaskHOL.Core.Parser.Lib
+import HaskHOL.Core.Parser.Prims
 import HaskHOL.Core.Parser.TypeParser
 
 import Control.Lens (view, views)
@@ -196,7 +195,7 @@ patomic =
                   ops2 <- gets $ views infixes (map fst)
                   ops3 <- gets $ view binders
                   ops4 <- gets $ view tyBinders
-                  if or (map (x `elem`) [ops1, ops2, ops3, ops4])
+                  if any (x `elem`) [ops1, ops2, ops3, ops4]
                      then fail "patomic"
                      else return $! PVar x dpty)
 

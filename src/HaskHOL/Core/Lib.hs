@@ -1245,7 +1245,7 @@ numOfString s =
    where res :: [(a, String)]
          res = case s of
                  ('0':'x':s') -> readHex s'
-                 ('0':'b':s') -> readInt 2 (`elem` ['0','1']) digitToInt s'
+                 ('0':'b':s') -> readInt 2 (`elem` ("01"::String)) digitToInt s'
                  _ -> readDec s
 
 -- Polymorphic, finite, partial functions via Patricia trees

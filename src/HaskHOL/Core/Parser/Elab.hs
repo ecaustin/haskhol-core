@@ -16,6 +16,8 @@
 module HaskHOL.Core.Parser.Elab
     ( tyElab
     , elab
+    , getOverloads
+    , getInterface
     ) where
 
 import HaskHOL.Core.Lib
@@ -24,6 +26,18 @@ import HaskHOL.Core.State
 import HaskHOL.Core.Basics
 
 import HaskHOL.Core.Parser.Lib
+import HaskHOL.Core.Parser.Prims
+
+{-| 
+  Returns the list of all overloadable symbols paired with their most generic 
+  types.
+-}
+getOverloads :: HOL cls thry (Map Text HOLType)
+getOverloads = viewParseContext overloads
+
+-- | Returns the list of all currently defined interface overloads.
+getInterface :: HOL cls thry [(Text, (Text, HOLType))]
+getInterface = viewParseContext interface
 
 {- 
   PEnv is an environment that carries an association between system type

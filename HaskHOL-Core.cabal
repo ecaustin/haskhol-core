@@ -74,8 +74,9 @@ library
       HaskHOL.Core.Parser.TypeParser  
       Paths_haskhol_core    
              
-    ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto -rtsopts
-    ghc-options: -O2 -funbox-strict-fields -Wall
+    ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto 
+                      -fno-warn-redundant-constraints
+    ghc-options: -O2 -funbox-strict-fields -Wall -fno-warn-redundant-constraints
 
 source-repository head
   type: git 

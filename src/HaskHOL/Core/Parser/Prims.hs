@@ -3,7 +3,7 @@ module HaskHOL.Core.Parser.Prims where
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
+import HaskHOL.Core.State.Monad
 
 import Control.Lens
 
@@ -47,6 +47,7 @@ data ParseContext = ParseContext
     , _tyBinders :: ![Text]
     , _infixes :: ![(Text, (Int, Text))]
     , _interface :: ![(Text, (Text, HOLType))]
+    , _overloads :: !(Map Text HOLType)
     } deriving Typeable
 
 deriveLift ''ParseContext
@@ -66,7 +67,7 @@ makeAcidic ''ParseContext ['putParseContext, 'getParseContext]
 initParseContext :: ParseContext
 initParseContext = ParseContext 
     initTypeConstants initTermConstants mapEmpty [] 
-    initBinderOps initTyBinderOps initInfixOps []
+    initBinderOps initTyBinderOps initInfixOps [] mapEmpty
 
 initBinderOps :: [Text]
 initBinderOps = ["\\"]
@@ -92,7 +93,7 @@ overParseContext :: Setting (->) ParseContext ParseContext a a -> (a -> a)
 overParseContext f p =
     do acid <- openLocalStateHOL initParseContext
        ctxt <- queryHOL acid GetParseContext
-       updateHOL acid (PutParseContext $ (over f p) ctxt)
+       updateHOL acid (PutParseContext $ over f p ctxt)
        closeAcidStateHOL acid
 
 testParseContext :: Optical (->) (->) (Const Bool) ParseContext ParseContext a a

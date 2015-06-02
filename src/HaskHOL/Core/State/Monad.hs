@@ -26,7 +26,6 @@ module HaskHOL.Core.State.Monad
     , runHOLProof
     , runHOLTheory
     , runHOLHint
-    , runHOLUnsafe'
       -- * Theory Contexts
     , TheoryPath
     , Module
@@ -280,13 +279,12 @@ runHOLUnsafe' fl m new mods =
        ref <- newIORef prfs
        runHOLUnsafe m ref new' mods `E.finally` when fl 
          (do prfs' <- readIORef ref
-             if prfs' /= prfs
-                then do acid' <- open
-                        update acid' $ InsertProofs prfs'
-                        createCheckpoint acid'
-                        createArchive acid'
-                        closeAcidState acid'
-             else return ())
+             when (prfs' /= prfs) $
+               do acid' <- open
+                  update acid' $ InsertProofs prfs'
+                  createCheckpoint acid'
+                  createArchive acid'
+                  closeAcidState acid')
 
 {-| 
   Runs a 'HOL' 'Proof' computation using a provided 'TheoryPath'. 

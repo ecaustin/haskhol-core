@@ -52,8 +52,8 @@ module HaskHOL.Core.Parser.TypeParser
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Parser.Lib
-import HaskHOL.Core.Parser.Prims (typeConstants, typeAbbrevs)
-import HaskHOL.Core.Kernel.Types (destTypeOp)
+import HaskHOL.Core.Parser.Prims
+import HaskHOL.Core.Kernel.Types
 
 import Control.Lens (view)
 

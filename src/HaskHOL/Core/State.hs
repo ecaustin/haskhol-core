@@ -56,6 +56,8 @@ import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State.Monad
 
+import HaskHOL.Core.Parser.Prims
+
 -- New flags and extensions
 -- | Flag states whether or not to print debug statements.
 newFlag "FlagDebug" True
@@ -212,6 +214,7 @@ newType' name tyop =
        acid <- openLocalStateHOL (TypeConstants initTypeConstants)
        updateHOL acid (InsertTypeConstant name tyop)
        createCheckpointAndCloseHOL acid
+       overParseContext typeConstants (mapInsert name tyop)
 
 {-| 
   Constructs a new primitve type constant of a given name and arity.  Also adds
@@ -296,6 +299,7 @@ newConstant' name c =
        acid <- openLocalStateHOL (TermConstants initTermConstants)
        updateHOL acid (InsertTermConstant name c)
        createCheckpointAndCloseHOL acid
+       overParseContext termConstants (mapInsert name c)
 
 {-|
   Constructs a new primitive term constant of a given name and type.  Also adds
