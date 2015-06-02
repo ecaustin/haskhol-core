@@ -17,8 +17,6 @@ module HaskHOL.Core.Basics
     ( -- * Variable Term and Type Generation
       genVarWithName
     , genVar
-    , unsafeGenVarWithName
-    , unsafeGenVar
     , genSmallTyVar
       -- * Common Type Functions
     , occursIn
@@ -153,9 +151,6 @@ import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics.Nets
 
-import Data.IORef
-import System.IO.Unsafe (unsafePerformIO)
-
 -- Term and Type Generation
 {-|  
   Generates a new term variable consisting of a given prefix and the next value
@@ -169,26 +164,6 @@ genVarWithName n ty =
 -- | A version of 'genVarWithName' that defaults to the prefix \"_\".
 genVar :: HOLType -> HOL cls thry HOLTerm
 genVar = genVarWithName "_"
-
-{-# NOINLINE counter #-}
-counter :: IORef Int
-counter = unsafePerformIO $ newIORef 0
-
-{-|
-  An unsafe version of 'genVarWithName' that attempts to create a fresh variable
-  using a global counter, atomically updated via 'unsafePerformIO'.  Useful if
-  fresh name generation is the only side effect of a function.
--}
-{-# NOINLINE unsafeGenVarWithName #-}
-unsafeGenVarWithName :: Text -> HOLType -> HOLTerm
-unsafeGenVarWithName n ty = 
-    unsafePerformIO $ atomicModifyIORef counter 
-      (\ x -> (succ x, mkVar (n `append` pack (show x)) ty))
-
--- | A version of 'genVarWithNamePure' that defaults to the prefix \"__\".
-{-# NOINLINE unsafeGenVar #-}
-unsafeGenVar :: HOLType -> HOLTerm
-unsafeGenVar = unsafeGenVarWithName "__"
 
 {-|
   Generates a new small, type variable with a name built using the fresh type

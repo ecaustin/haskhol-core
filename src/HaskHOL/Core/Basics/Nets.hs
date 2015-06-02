@@ -27,7 +27,7 @@ module HaskHOL.Core.Basics.Nets
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import {-# SOURCE #-} HaskHOL.Core.Basics (unsafeGenVar, stripComb)
+import HaskHOL.Core.State.Monad
 
 -- ordered, unique insertion for sets as lists
 setInsert :: Ord a => a -> [a] -> [a]
@@ -115,7 +115,7 @@ netMap f (NetNode xs ys) =
 -}
 labelToStore :: [HOLTerm] -> HOLTerm -> (TermLabel, [HOLTerm])
 labelToStore lconsts tm = 
-    let (op, args) = stripComb tm in
+    let (op, args) = revSplitList destComb tm in
       case op of
         (Const x _) -> (CNet x (length args), args)
         (Abs bv bod) -> 
@@ -161,7 +161,7 @@ netEnter lconsts (tm, b) net = netUpdate lconsts (b, [tm], net)
 -}
 labelForLookup :: HOLTerm -> (TermLabel, [HOLTerm])
 labelForLookup tm =
-    let (op, args) = stripComb tm in
+    let (op, args) = revSplitList destComb tm in
       case op of
         (Const x _) -> (CNet x (length args), args)
         (Abs _ bod) -> (LNet (length args), bod:args)

@@ -26,6 +26,7 @@ module HaskHOL.Core.State.Monad
     , runHOLProof
     , runHOLTheory
     , runHOLHint
+    , runHOLUnsafe'
       -- * Theory Contexts
     , TheoryPath
     , Module
@@ -71,6 +72,8 @@ module HaskHOL.Core.State.Monad
       -- * Methods Related to Fresh Name Generation
     , tickTermCounter
     , tickTypeCounter
+    , unsafeGenVarWithName
+    , unsafeGenVar
       -- * Proof Caching
     , cacheProof
     , cacheProofs
@@ -79,6 +82,7 @@ module HaskHOL.Core.State.Monad
     ) where
 
 import HaskHOL.Core.Lib hiding (combine, pack)
+import qualified HaskHOL.Core.Lib as Lib (pack, append)
 import HaskHOL.Core.Kernel.Prims
 
 -- HOL Monad imports
@@ -93,6 +97,7 @@ import Data.Acid hiding (makeAcidic, Query, Update)
 import System.IO.Error
 import qualified Data.Text.Lazy as T
 import Control.Concurrent (threadDelay)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- TH imports
 import Language.Haskell.TH
@@ -930,3 +935,23 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                         atomicModifyIORef' ref (\ x -> 
                           let hm'' = Hash.union x hm' in
                             (hm'', fromJust $ Hash.lookup lbl hm''))
+
+{-# NOINLINE counter #-}
+counter :: IORef Int
+counter = unsafePerformIO $ newIORef 0
+
+{-|
+  An unsafe version of 'genVarWithName' that attempts to create a fresh variable
+  using a global counter, atomically updated via 'unsafePerformIO'.  Useful if
+  fresh name generation is the only side effect of a function.
+-}
+{-# NOINLINE unsafeGenVarWithName #-}
+unsafeGenVarWithName :: Text -> HOLType -> HOLTerm
+unsafeGenVarWithName n ty = 
+    unsafePerformIO $ atomicModifyIORef counter 
+      (\ x -> (succ x, VarIn (n `Lib.append` Lib.pack (show x)) ty))
+
+-- | A version of 'genVarWithNamePure' that defaults to the prefix \"__\".
+{-# NOINLINE unsafeGenVar #-}
+unsafeGenVar :: HOLType -> HOLTerm
+unsafeGenVar = unsafeGenVarWithName "__"

@@ -21,11 +21,11 @@ module HaskHOL.Core.Ext.QQ
     ( baseQuoter
     , baseQQ
     , str
-    , generateParseContext
+    , liftParseContext
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.State
+import HaskHOL.Core.State.Monad
 import HaskHOL.Core.Parser
 import HaskHOL.Core.Ext.Protected
 
@@ -34,7 +34,9 @@ import HaskHOL.Core.Ext.Protected
   of this module, i.e. runIO
 -}
 import Language.Haskell.TH
+import Language.Haskell.TH.Lift
 import Language.Haskell.TH.Quote
+
 
 {-|
   This is the base quasi-quoter for the HaskHOL system.  When provided with a
@@ -44,20 +46,17 @@ import Language.Haskell.TH.Quote
   Note that, at this point in time, we only allowing quoting at the expression
   level.
 -}
-baseQuoter :: CtxtName thry => TheoryPath thry -> PData ParseContext thry 
-           -> QuasiQuoter
+baseQuoter :: CtxtName thry => TheoryPath thry -> ParseContext -> QuasiQuoter
 baseQuoter thry pc = QuasiQuoter quoteBaseExps nothing nothing nothing
     where quoteBaseExps :: String -> Q Exp 
           quoteBaseExps x =
               let x' = textStrip $ pack x in
                 if textHead x' == ':'
                    then do t <- runIO . flip (runHOLProof False) thry $
-                                  do pc' <- serve pc
-                                     tyElab #<< holTypeParser pc' (textTail x')
+                                  tyElab #<< holTypeParser pc (textTail x')
                            liftProtectedExp $ protect thry t
                    else do t <- runIO . flip (runHOLProof False) thry $
-                                  do pc' <- serve pc
-                                     elab #<< holTermParser pc' x'
+                                  elab #<< holTermParser pc x'
                            liftProtectedExp $ protect thry t
           nothing _ = fail "quoting here not supported"
 
@@ -87,7 +86,7 @@ baseQuoter thry pc = QuasiQuoter quoteBaseExps nothing nothing nothing
   Template Haskell has to do.
 -}
 baseQQ :: QuasiQuoter
-baseQQ = baseQuoter ctxtBase (unsafeProtect initParseContext)
+baseQQ = baseQuoter ctxtBase initParseContext
 
 {-|
   This is a specialized quasi-quoter for 'Text's.  It can be used to strip
@@ -99,14 +98,6 @@ str = QuasiQuoter quoteStrExp nothing nothing nothing
     where quoteStrExp x = [| textStrip $ pack $(litE $ StringL x) |]
           nothing _ = fail "quoting here not supported"
 
-generateParseContext :: forall thry. CtxtName thry => TheoryPath thry -> Q [Dec]
-generateParseContext ctxt =
-    let oldCtxt = ctxtName (undefined::thry)
-        oldType = take (length oldCtxt - 4) oldCtxt
-        name = mkName $ "pc" ++ oldType in
-      do e <- runIO (runHOLProof False (liftM (protect ctxt) parseContext) ctxt)
-         e' <- liftProtectedExp e
-         return [ SigD name (ConT ''ParseContext)
-                , ValD (VarP name) (NormalB e') []
-                ]
-              
+liftParseContext :: String -> Q Exp
+liftParseContext ctxt =
+    lift =<< runIO (runHOLUnsafe' False parseContext ctxt [])
