@@ -100,7 +100,10 @@ instance (IsString a, a~Text) => HOLTermRep a cls thry where
                  elab #<< holTermParser ctxt x
                 
 instance HOLTermRep PreTerm cls thry where
-    toHTm = elab
+    toHTm = do ctxt <- parseContext
+               case elab ctxt of
+                 Left (e:_) -> throwHOL $ show e
+                 Right res -> return res
 
 instance HOLTermRep HOLTerm cls thry where
     toHTm = return
