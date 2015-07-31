@@ -55,6 +55,10 @@ module HaskHOL.Core.Parser
     , makeOverloadable
     , overloadInterface
     , prioritizeOverload
+      -- * Hidden Constant Mappings
+    , getHidden
+    , hideConstant
+    , unhideConstant
       -- * Type Abbreviations
     , newTypeAbbrev
     , removeTypeAbbrev
@@ -157,6 +161,12 @@ infixes :: HOL cls thry [(Text, (Int, Text))]
 infixes = Prims.viewParseContext Prims.infixes
 
 -- Interface
+getInterface :: HOL cls thry [(Text, (Text, HOLType))]
+getInterface = Prims.viewParseContext Prims.interface
+
+getOverloads :: HOL cls thry (Map Text HOLType)
+getOverloads = Prims.viewParseContext Prims.overloads
+
 -- | Removes all instances of an overloaded symbol from the interface.
 removeInterface :: Text -> HOL Theory thry ()
 removeInterface sym = 
@@ -270,6 +280,20 @@ prioritizeOverload ty =
                                                  return x) iface
                   overloadInterface s $ mkVar n t')
               <|> return ()) $ mapToList overs
+
+-- Hidden Constants
+getHidden :: HOL cls thry [Text]
+getHidden = Prims.viewParseContext Prims.hidden
+
+-- | Specifies a 'Text' for the parser to stop recognizing as a constant.
+hideConstant :: Text -> HOL Theory thry ()
+hideConstant sym =
+    Prims.overParseContext Prims.hidden (\ syms -> sym : syms)
+
+-- | Specifies a 'Text' for the parser to resume recognizing as a constant.
+unhideConstant :: Text -> HOL Theory thry ()
+unhideConstant sym = 
+    Prims.overParseContext Prims.hidden (filter (\ (x, _) -> x /= sym))
 
 -- Type Abbreviations
 {-| 

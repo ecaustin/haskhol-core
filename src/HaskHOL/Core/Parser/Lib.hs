@@ -56,18 +56,9 @@ module HaskHOL.Core.Parser.Lib
     , mymany1
     , mysepBy1
     , mytry
-      -- * Type Elaboration Flags
-    , FlagIgnoreConstVarstruct(..)
-    , FlagTyInvWarning(..)
-    , FlagTyOpInvWarning(..)
-    , FlagAddTyAppsAuto(..)
       -- * Pretty Printer Flags
     , FlagRevInterface(..)
     , FlagPrintAllThm(..)
-      -- * Hidden Constant Mapping 
-    , hideConstant
-    , unhideConstant
-    , getHidden
       -- * Extensible Printer Operators
     , addUnspacedBinop 
     , addPrebrokenBinop
@@ -97,29 +88,6 @@ import Text.Parsec.Token
 import Control.Lens hiding (op)
 
 -- new flags and extensions
-{-| 
-  Flag to say whether to treat a constant varstruct, i.e.  @\\ const . bod@, as
-  variable.
--}
-newFlag "FlagIgnoreConstVarstruct" True
-
-{-|
-  Flag indicating that the user should be warned if a type variable was invented
-  during parsing.
--}
-newFlag "FlagTyInvWarning" False
-
-{-|
-  Flag indicating that the user should be warned if a type operator variable was
-  invented during parsing.
--}
-newFlag "FlagTyOpInvWarning" False
-
-{-|
-  Flag to say whether implicit type applications are to be added during parsing.
--}
-newFlag "FlagAddTyAppsAuto" True
-
 -- | Flag to indicate whether the interface should be reversed on printing.
 newFlag "FlagRevInterface" True
 
@@ -128,28 +96,6 @@ newFlag "FlagRevInterface" True
   to just the conclusion term.
 -}
 newFlag "FlagPrintAllThm" True
-
-data Hidden = Hidden [Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''Hidden
-
-insertHidden :: Text -> Update Hidden ()
-insertHidden x =
-    do (Hidden xs) <- get
-       put (Hidden (x `insert` xs))
-
-removeHidden :: Text -> Update Hidden ()
-removeHidden x =
-    do (Hidden xs) <- get
-       put (Hidden (x `delete` xs))
-
-getHiddens :: Query Hidden [Text]
-getHiddens =
-    do (Hidden xs) <- ask
-       return xs
-
-makeAcidic ''Hidden ['insertHidden, 'removeHidden, 'getHiddens]
-
 
 data UnspacedBinops = UnspacedBinops ![Text] deriving Typeable
 
@@ -332,29 +278,6 @@ mysepBy1 = P.sepBy1
 -- | A re-export of 'P.try'.
 mytry :: MyParser a -> MyParser a
 mytry = P.try
-
--- Hidden Constant Mapping
--- | Specifies a 'Text' for the parser to stop recognizing as a constant.
-hideConstant :: Text -> HOL Theory thry ()
-hideConstant c =
-    do acid <- openLocalStateHOL (Hidden [])
-       updateHOL acid (InsertHidden c)
-       createCheckpointAndCloseHOL acid
-
--- | Specifies a 'Text' for the parser to resume recognizing as a constant.
-unhideConstant :: Text -> HOL Theory thry ()
-unhideConstant c =
-    do acid <- openLocalStateHOL (Hidden [])
-       updateHOL acid (RemoveHidden c)
-       createCheckpointAndCloseHOL acid
-
--- | Returns all 'Text's currently acting as constants hidden from the parser.
-getHidden :: HOL cls thry [Text]
-getHidden =
-    do acid <- openLocalStateHOL (Hidden [])
-       hids <- queryHOL acid GetHiddens
-       closeAcidStateHOL acid
-       return hids
 
 {-| 
   Specifies a symbol to be recognized as an unspaced, binary operator by the

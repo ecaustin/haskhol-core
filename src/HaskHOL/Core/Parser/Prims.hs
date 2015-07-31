@@ -48,6 +48,7 @@ data ParseContext = ParseContext
     , _infixes :: ![(Text, (Int, Text))]
     , _interface :: ![(Text, (Text, HOLType))]
     , _overloads :: !(Map Text HOLType)
+    , _hidden :: ![Text]
     } deriving Typeable
 
 deriveLift ''ParseContext
@@ -67,7 +68,7 @@ makeAcidic ''ParseContext ['putParseContext, 'getParseContext]
 initParseContext :: ParseContext
 initParseContext = ParseContext 
     initTypeConstants initTermConstants mapEmpty [] 
-    initBinderOps initTyBinderOps initInfixOps [] mapEmpty
+    initBinderOps initTyBinderOps initInfixOps [] mapEmpty []
 
 initBinderOps :: [Text]
 initBinderOps = ["\\"]

@@ -40,6 +40,7 @@ library
                    , text-show >= 0.6
                    , th-lift >= 0.7
                    , th-lift-instances >= 0.1
+                   , transformers >= 0.4
                    , unordered-containers >= 0.2
                    , wl-pprint-text >= 1.1
 
@@ -74,9 +75,8 @@ library
       HaskHOL.Core.Parser.TypeParser  
       Paths_haskhol_core    
              
-    ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto 
-                      -fno-warn-redundant-constraints
-    ghc-options: -O2 -funbox-strict-fields -Wall -fno-warn-redundant-constraints
+    ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto
+    ghc-options: -O2 -funbox-strict-fields -Wall
 
 source-repository head
   type: git 

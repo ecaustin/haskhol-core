@@ -22,6 +22,7 @@ module HaskHOL.Core.Ext.QQ
     , baseQQ
     , str
     , liftParseContext
+    , liftElabState
     ) where
 
 import HaskHOL.Core.Lib
@@ -101,3 +102,7 @@ str = QuasiQuoter quoteStrExp nothing nothing nothing
 liftParseContext :: TheoryPath thry -> Q Exp
 liftParseContext ctxt =
     lift =<< runIO (runHOLProof False parseContext ctxt)
+
+liftElabState :: TheoryPath thry -> Q Exp
+liftElabState ctxt =
+    lift =<< runIO (runHOLProof False elabState ctxt)

@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances, OverloadedStrings, TypeSynonymInstances #-}
 {-|
   Module:    HaskHOL.Core.Parser.Elab
   Copyright: (c) The University of Kansas 2013
@@ -20,33 +20,168 @@ module HaskHOL.Core.Parser.Elab
     , getInterface
     ) where
 
-import HaskHOL.Core.Lib
+import HaskHOL.Core.Lib hiding (ask)
+import HaskHOL.Core.Basics hiding (mkMConst, mkGAbs, mkBinder)
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
-import HaskHOL.Core.Basics
 
-import HaskHOL.Core.Parser.Lib
+import HaskHOL.Core.Parser.Lib hiding (gets)
 import HaskHOL.Core.Parser.Prims
 
+import Control.Lens hiding (op, cons, snoc)
+import Control.Monad.ST
+import Data.STRef
+import Control.Monad.Trans
+import Control.Monad.Trans.Except
+import Control.Monad.Trans.Reader
+
+-- Static Configuration
+{-|
+  Flag to say whether to warn on invention of system type variables and system
+  type operator variables.
+-}
+invWarning :: Bool
+invWarning = True
+
+{-|
+  Flag to say whether to automatically turn a universal type into a 
+  non-universal type by adding applications of type variables.
+-}
+addTyAppsAuto :: Bool
+addTyAppsAuto = True
+
 {-| 
-  Returns the list of all overloadable symbols paired with their most generic 
-  types.
+  Flag to say whether to treat a constant varstruct, i.e.  @\\ const . bod@, as
+  variable.
 -}
-getOverloads :: HOL cls thry (Map Text HOLType)
-getOverloads = viewParseContext overloads
+ignoreConstVarstruct :: Bool
+ignoreConstVarstruct = True
 
--- | Returns the list of all currently defined interface overloads.
-getInterface :: HOL cls thry [(Text, (Text, HOLType))]
-getInterface = viewParseContext interface
-
-{- 
-  PEnv is an environment that carries an association between system type
-  variables and their unifiable type.  It is defined as a type synonym in case
-  we ever need to change its implementation for performance reasons.
--}
+-- types
 type PEnv = [(Integer, PreType)]
 
+data ElabError 
+    = MissingConstant Text
+    | MissingOverload Text
+    | FailedInst Text SubstTrip
+    | BadApplication TypeOp [HOLType]
+    | TyElabError String
+
+type ElabM s = ExceptT [ElabError] (ReaderT (STRef s ElabState) (ST s))
+
+instance Note (ElabM s) where
+    job <?> str = job `catchE` (\ es -> throwE (TyElabError str : es))
+
+data ElabState = ElabState
+    { _stvsTrans :: !Bool
+    , _stovsTrans :: !Bool
+    , _smallSTVS :: ![Integer]
+    , _tyCounter :: !Integer
+    , _warnings :: ![String]
+    , _parseCtxt :: !ParseContext
+    }
+
+makeLenses ''ElabState
+
+initElabState :: ParseContext -> ElabState
+initElabState = ElabState False False [] 0  []
+
+modElabState :: (ElabState -> ElabState) -> ElabM s ()
+modElabState f = lift $ 
+    do ref <- ask
+       lift $ modifySTRef' ref f
+
+viewElabState :: (ElabState -> a) -> ElabM s a
+viewElabState f = lift $
+    do ref <- ask
+       lift . liftM f $ readSTRef ref
+
 -- utility functions
+addWarning :: Bool -> String -> ElabM s ()
+addWarning True str = modElabState $ over warnings ((:) str)
+addWarning False _ = return ()
+
+getOverloads :: ElabM s (Map Text HOLType)
+getOverloads = viewElabState $ view (parseCtxt . overloads)
+
+getInterface :: ElabM s [(Text, (Text, HOLType))]
+getInterface = viewElabState $ view (parseCtxt . interface)
+
+getHidden :: ElabM s [Text]
+getHidden = viewElabState $ view (parseCtxt . hidden)
+
+getConstants :: ElabM s (Map Text HOLTerm)
+getConstants = viewElabState $ view (parseCtxt . termConstants)
+
+getTypeConstants :: ElabM s (Map Text TypeOp)
+getTypeConstants = viewElabState $ view (parseCtxt . typeConstants)
+
+getConstType :: Text -> ElabM s HOLType
+getConstType name = 
+    do consts <- getConstants
+       case mapLookup name consts of
+         Just res -> return $! typeOf res
+         Nothing -> throwE [MissingConstant name]
+
+mkConst :: Text -> SubstTrip -> ElabM s HOLTerm
+mkConst name pat =
+    do consts <- getConstants
+       case mapLookup name consts of
+         Just op -> case instConstFull op pat of
+                      Just res -> return res
+                      Nothing -> throwE [FailedInst name pat]
+         Nothing -> throwE [MissingConstant name]
+
+mkMConst :: Text -> HOLType -> ElabM s HOLTerm
+mkMConst name ty =
+    do uty <- getConstType name <?> "mkMConst: not a constant name."
+       (mkConst name . fromJust $ typeMatch uty ty ([], [], [])) <?>
+         "mkMConst: generic type cannot be instantiated."
+
+mkBinder :: Text -> HOLTerm -> HOLTerm -> ElabM s HOLTerm
+mkBinder op v tm = 
+    (do c <- mkConst op ([(tyA, typeOf v)], [], [])
+        fromRightM $ mkComb c =<< mkAbs v tm)
+    <?> "mkBinder: " ++ show op
+
+mkGAbs :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
+mkGAbs tm1@Var{} tm2 =
+    mkAbs tm1 tm2 <#?> "mkGAbs: simple abstraction failed"
+mkGAbs tm1 tm2 = 
+    let fvs = frees tm1 in
+      (do fTy <- mkType "fun" [typeOf tm1, typeOf tm2]
+          let f = variant (frees tm1++frees tm2) $ mkVar "f" fTy
+          bodIn <- flip (foldrM (mkBinder "!")) fvs =<< 
+                     mkGEq (fromRight $ mkComb f tm1) tm2
+          bndr <- mkConst "GABS" ([(tyA, fTy)], [], [])
+          fromRightM $ mkComb bndr =<< mkAbs f bodIn)
+      <?> "mkGAbs"
+  where mkGEq :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
+        mkGEq t1 t2 = 
+          do p <- mkConst "GEQ" ([(tyA, typeOf t1)], [], [])
+             fromRightM $ mkBinop p t1 t2
+
+mkType :: Text -> [HOLType] -> ElabM s HOLType
+mkType name args =
+    do consts <- getTypeConstants
+       case mapLookup name consts of
+         Just tyOp -> mkApp tyOp
+         Nothing
+             | null args -> 
+                   throwE [TyElabError "type operator applied to zero args."]
+             | otherwise ->
+                   do name' <- if textHead name == '_' 
+                               then return $! textTail name 
+                               else do addWarning True $ "type " ++ show name ++
+                                         " has not been defined. " ++
+                                         "Defaulting to type operator variable."
+                                       return name
+                      mkApp $ mkTypeOpVar name'
+  where mkApp :: TypeOp -> ElabM s HOLType
+        mkApp tyOp =
+            case tyApp tyOp args of
+               Right res -> return res
+               Left{} -> throwE [BadApplication tyOp args]
+
 destSTV :: PreType -> Maybe Integer
 destSTV (STyVar n) = Just n
 destSTV _ = Nothing
@@ -86,17 +221,14 @@ variantUTyVar _ tv = tv
 mkFunPTy :: PreType -> PreType -> PreType
 mkFunPTy pty1 pty2 = PTyComb (PTyCon "fun") [pty1, pty2]
 
-{- 
-  Used to construct a constant that has one or more instantiations provided for
-  its type operator variables.
--}
-mkTIConst :: Text -> HOLType -> HOLTypeEnv -> HOL cls thry HOLTerm
+-- Construct a constant that has one or more instantiations provided
+mkTIConst :: Text -> HOLType -> HOLTypeEnv -> ElabM s HOLTerm
 mkTIConst c ty subs =
     (do cty' <- liftM (typeSubst subs) $ getConstType c
         let (mat1Tys, opTys, opOps) = fromJust $ typeMatch cty' ty ([], [], [])
             tys' = map (second $ typeSubst mat1Tys) subs ++ mat1Tys
             mat2 = (tys', opTys, opOps)
-        con <- mkConstFull c mat2
+        con <- mkConst c mat2
         if typeOf con == ty
            then return con
            else mzero)
@@ -147,15 +279,17 @@ istrivial env x (PUTy _ tbody) =
           else return False
 
 -- system type generation
-newTypeVar :: TypingState -> HOL cls thry PreType
-newTypeVar ref = return STyVar <*> tickTypeCounter' ref
+newTypeVar :: ElabM s PreType
+newTypeVar = 
+    do modElabState $ over tyCounter succ
+       liftM STyVar . viewElabState $ view tyCounter
 
 -- Turn UType term into a non-UType by adding type applications
-addTyApps :: TypingState -> PreTerm -> PreType -> HOL cls thry PreTerm
-addTyApps ref tm ty@(PUTy tv tb) =
-    do ntv <- newTypeVar ref
-       addTyApps ref (TyPComb tm ty ntv) $ pretypeSubst [(ntv, tv)] tb
-addTyApps _ tm _ = return tm
+addTyApps :: PreTerm -> PreType -> ElabM s PreTerm
+addTyApps tm ty@(PUTy tv tb) =
+    do ntv <- newTypeVar
+       addTyApps (TyPComb tm ty ntv) $ pretypeSubst [(ntv, tv)] tb
+addTyApps tm _ = return tm
 
 -- Check where unification of ty with a UType is potentially possible
 unifiableWithUType :: PreType -> PEnv -> Bool
@@ -166,13 +300,15 @@ unifiableWithUType ty env
             isJust (destPUTy tys) || isJust (destSTV tys)
 
 -- Get a new instance of a constant's generic type modulo interface
-getGenericType :: Text -> HOL cls thry HOLType
+getGenericType :: Text -> ElabM s HOLType
 getGenericType cname =
     do iface <- getInterface
        case filter (\ (x, _) -> x == cname) iface of
          [(_, (_, ty))] -> return ty
          (_:_:_) -> do overs <- getOverloads
-                       liftMaybe "getGenericType" $ mapLookup cname overs
+                       case mapLookup cname overs of
+                         Just res -> return res
+                         Nothing -> throwE [MissingOverload cname]
          _ -> getConstType cname
 
 {- 
@@ -201,7 +337,8 @@ pretypeSubst tyenv ty@(PUTy tv tbody) =
                     tvpatts = map snd tyenv'
                     tvrepls = catUTyVars . map (\ x -> revAssocd x tyenv' x) $ 
                                 intersect tvbody tvpatts 
-                    tv' = variantUTyVar ((tvbody \\ tvpatts) `union` tvrepls) tv in
+                    tv' = variantUTyVar ((tvbody \\ tvpatts) `union` tvrepls) tv
+                in
                   PUTy tv' $ pretypeSubst ((tv', tv):tyenv') tbody
            else PUTy tv $ pretypeSubst tyenv' tbody
 
@@ -215,141 +352,114 @@ solve env (PTyComb f args) =
     PTyComb (solve env f) $ map (solve env) args
 solve env (PUTy tv tbod) =
     PUTy tv $ solve env tbod
-                            
--- Final type checker for preterms
-{- 
-  Local reference that tracks if we invent system type (operator) variables.
-  Also used to track the smallness constraints of system type variables.
--}
-type TypingState = HOLRef TypingRefs
-data TypingRefs = TypingRefs
-    { stvsTrans :: !Bool
-    , stovsTrans :: !Bool
-    , smallSTVS :: ![Integer]
-    , tyCounter :: !Integer
-    }
-
-tickTypeCounter' :: TypingState -> HOL cls thry Integer
-tickTypeCounter' ref = 
-    do n' <- liftM (succ . tyCounter) $ readHOLRef ref
-       modifyHOLRef ref $ \ st -> st { tyCounter = n' }
-       return n'
 
 -- Post typechecking elaboration
-tyElabRef :: TypingState -> PreType -> HOL cls thry HOLType
-tyElabRef _ (PTyCon s) = mkType s []
-tyElabRef ref (PTyComb STyVar{} []) =
-    do modifyHOLRef ref $ \ st -> st { stvsTrans = True }
-       fail $ "tyElab: system type variable present in type application of " ++
-              "null arity"
-tyElabRef ref (PTyComb (STyVar n) args) =
-    do modifyHOLRef ref $ \ st -> st { stovsTrans = True }
-       mkType ('?' `cons` textShow n) =<< mapM (tyElabRef ref) args
-tyElabRef ref (PTyComb (UTyVar _ v _) args) =
-    mkType v =<< mapM (tyElabRef ref) args
-tyElabRef ref (PTyComb (PTyCon s) args) =
-    mkType s =<< mapM (tyElabRef ref) args
-tyElabRef _ PTyComb{} =
-    fail "tyElab: unexpected first argument to type combination"
-tyElabRef ref (PUTy (UTyVar _ s 0) tbody) =
-    do tbody' <- tyElabRef ref tbody
-       liftM1 mkUType (mkSmall $ mkVarType s) tbody' <#?> 
-         "tyElab: universal type"
-tyElabRef ref (PUTy STyVar{} _) =
-    do modifyHOLRef ref $ \ st -> st { stvsTrans = True }
-       fail "tyElab: system type variable in universal type."
--- Alternative way to handle this if we don't want to make it an error, 
--- per HOL2P:
-{-
-tyElabRef ref (PUTy tv@(STyVar n) tbody) =
-    do modifyHOLRef ref $ \ st -> st { stvsTrans = True }
-       warn True "tyElab: system type variable in universal type."
-       let tv' = '?' : show n
-       tbody' <- tyElabRef ref $ pretypeSubst [(UTyVar True tv' 0, tv)] tbody
-       liftMaybe "tyElab: universal type - system type variable case" $
-         do tv'' <- mkSmall $ mkVarType tv'
-            mkUType tv'' tbody'
--}
-tyElabRef _ PUTy{} =
-    fail "tyElab: invalid universal type construction."
-tyElabRef ref (STyVar n) =
-    do modifyHOLRef ref $ \ st -> st { stvsTrans = True }
+tyElabRef :: PreType -> ElabM s HOLType
+tyElabRef (PTyCon s) = mkType s []
+tyElabRef (PTyComb STyVar{} []) =
+    do modElabState $ set stvsTrans True
+       throwE [TyElabError $ "system type variable present in type " ++
+                             "application of null arity."]
+tyElabRef (PTyComb (STyVar n) args) =
+    do modElabState $ set stovsTrans True
+       mkType ('?' `cons` textShow n) =<< mapM tyElabRef args
+tyElabRef (PTyComb (UTyVar _ v _) args) =
+    mkType v =<< mapM tyElabRef args
+tyElabRef (PTyComb (PTyCon s) args) =
+    mkType s =<< mapM tyElabRef args
+tyElabRef PTyComb{} =
+    throwE [TyElabError "unexpected first argument to type combination."]
+tyElabRef (PUTy (UTyVar _ s 0) tbody) =
+    do tbody' <- tyElabRef tbody
+       return . fromRight $ do s' <- mkSmall $ mkVarType s
+                               mkUType s' tbody'
+tyElabRef (PUTy tv@(STyVar n) tbody) =
+    do modElabState $ set stvsTrans True
+       addWarning True "tyElab: system type variable in universal type."
+       let tv' = pack $ '?' : show n
+       tbody' <- tyElabRef $ pretypeSubst [(UTyVar True tv' 0, tv)] tbody
+       case mkUType tbody' =<< mkSmall (mkVarType tv') of
+         Right res -> return res
+         Left e -> throwE [TyElabError e]
+tyElabRef PUTy{} =
+    throwE [TyElabError "invalid universal type construction."]
+tyElabRef (STyVar n) =
+    do modElabState $ set stvsTrans True
        let tv = mkVarType $ '?' `cons` textShow n
-       st <- readHOLRef ref
-       if n `elem` smallSTVS st
-          then mkSmall tv <#?> "tyElab: small system type variable"
+       stvs <- viewElabState $ view smallSTVS
+       if n `elem` stvs
+          then return . fromRight $ mkSmall tv
           else return tv
-tyElabRef _ (UTyVar True v _) = 
-    mkSmall (mkVarType v) <#?> "tyElab: small user type variable"
-tyElabRef _ (UTyVar False v _) = return $! mkVarType v
+tyElabRef (UTyVar True v _) = 
+    return . fromRight . mkSmall $ mkVarType v
+tyElabRef (UTyVar False v _) = return $! mkVarType v
 
-tmElab :: TypingState -> PreTerm -> HOL cls thry HOLTerm
-tmElab ref ptm =
-    do modifyHOLRef ref $ \ st -> st { stvsTrans = False, stovsTrans = False }
+tmElab :: PreTerm -> ElabM s HOLTerm
+tmElab ptm =
+    do modElabState $ \ st -> st & 
+         set stvsTrans False & set stovsTrans False
        tm <- tmElabRec ptm
-       st <- readHOLRef ref
-       flag1 <- getBenignFlag FlagTyInvWarning
-       flag2 <- getBenignFlag FlagTyOpInvWarning
-       warn (stvsTrans st && flag1) 
+       fl1 <- viewElabState $ view stvsTrans
+       fl2 <- viewElabState $ view stovsTrans
+       addWarning (fl1 && invWarning) 
          "warning: inventing type variables"
-       warn (stovsTrans st && flag2) 
+       addWarning (fl2 && invWarning) 
          "warning: inventing type operator variables"
        return tm
-  where tmElabRec :: PreTerm -> HOL cls thry HOLTerm
+  where tmElabRec :: PreTerm -> ElabM s HOLTerm
         tmElabRec PApp{} =
             fail $ "tmElab: type application present outside of type " ++
                    "combination term"
         tmElabRec (PVar s pty) = 
-            liftM (mkVar s) $ tyElabRef ref pty
+            liftM (mkVar s) $ tyElabRef pty
         tmElabRec (PConst s pty) = 
-            mkMConst s =<< tyElabRef ref pty
+            mkMConst s =<< tyElabRef pty
         tmElabRec (PInst tvis (PConst c pty)) =
-            do tvis' <- mapM (\ (ty, x) -> do ty' <- tyElabRef ref ty
+            do tvis' <- mapM (\ (ty, x) -> do ty' <- tyElabRef ty
                                               return (mkVarType x, ty')) tvis
-               pty' <- tyElabRef ref pty
+               pty' <- tyElabRef pty
                mkTIConst c pty' tvis'
         tmElabRec PInst{} =
             fail "tmElab: body of TYINST not a constant."
         tmElabRec (PComb l r) =
             do (l', r') <- pairMapM tmElabRec (l, r)
-               liftEither "tmElab" $ mkComb l' r'
+               return . fromRight $ mkComb l' r'
         tmElabRec (PAbs v bod) =
             do (v', bod') <- pairMapM tmElabRec (v, bod)
                mkGAbs v' bod'
         tmElabRec (TyPAbs tv t) =
-            do tv' <- tyElabRef ref tv
+            do tv' <- tyElabRef tv
                t' <- tmElabRec t
-               liftEither "tmElab" $ mkTyAbs tv' t'
+               return . fromRight $ mkTyAbs tv' t'
         tmElabRec (TyPComb t _ ti) =
             do t' <- tmElabRec t
-               ti' <- tyElabRef ref ti
-               liftEither "tmElab" $ mkTyComb t' ti'
+               ti' <- tyElabRef ti
+               return . fromRight $ mkTyComb t' ti'
         tmElabRec (PAs tm _) = tmElabRec tm
 
 -- retypecheck
-preTypeOf :: TypingState -> [(Text, PreType)] -> PreTerm -> 
-             HOL cls thry PreTerm
-preTypeOf ref senv pretm = 
-    do ty <- newTypeVar ref
-       modifyHOLRef ref $ \ st -> st { smallSTVS = [] }
+preTypeOf :: [(Text, PreType)] -> PreTerm -> ElabM s PreTerm
+preTypeOf senv pretm = 
+    do ty <- newTypeVar
+       modElabState $ set smallSTVS []
        (tm', _, env) <- typify ty (pretm, senv, []) <?> 
                           "typechecking: initial type assignment"
        env' <- resolveInterface tm' return env <?> 
                  "typechecking: overload resolution"
        solvePreterm env' tm'
   where typify :: PreType -> (PreTerm, [(Text, PreType)], PEnv) -> 
-                  HOL cls thry (PreTerm, [(Text, PreType)], PEnv)
+                  ElabM s (PreTerm, [(Text, PreType)], PEnv)
         typify ty (PVar s _, venv, uenv) =
             case lookup s venv of
               Just ty' -> 
-                do flag <- getBenignFlag FlagAddTyAppsAuto
-                   let tys = if flag then solve uenv ty' else ty'
-                   if flag && isJust (destPUTy tys) && 
-                      not (unifiableWithUType ty uenv)
-                      then do tys' <- addTyApps ref (PVar s tys) tys
-                              typify ty (tys', venv, uenv)
-                      else do uenv' <- unify uenv (tys, ty)
-                              return (PVar s tys, [], uenv')
+                let flag = addTyAppsAuto
+                    tys = if flag then solve uenv ty' else ty' in
+                  if flag && isJust (destPUTy tys) && 
+                     not (unifiableWithUType ty uenv)
+                  then do tys' <- addTyApps (PVar s tys) tys
+                          typify ty (tys', venv, uenv)
+                  else do uenv' <- unify uenv (tys, ty)
+                          return (PVar s tys, [], uenv')
               Nothing -> 
                 case numOfString (unpack s) of
                   Just s' -> 
@@ -358,13 +468,12 @@ preTypeOf ref senv pretm =
                          return (t, [], uenv')
                   Nothing ->
                     (do s' <- getGenericType s
-                        hidden <- getHidden
-                        if s `notElem` hidden
-                           then do flag <- getBenignFlag FlagAddTyAppsAuto
-                                   tys <- pretypeInstance s'
-                                   if flag && isJust (destPUTy tys) &&
+                        hid <- getHidden
+                        if s `notElem` hid
+                           then do tys <- pretypeInstance s'
+                                   if addTyAppsAuto && isJust (destPUTy tys) &&
                                       not (unifiableWithUType ty uenv)
-                                      then do ty' <- addTyApps ref (PVar s tys) tys
+                                      then do ty' <- addTyApps (PVar s tys) tys
                                               typify ty (ty', venv, uenv)
                                       else do uenv' <- unify uenv (tys, ty)
                                               return (PConst s tys, [], uenv')
@@ -395,7 +504,7 @@ preTypeOf ref senv pretm =
                             uenv' <- unify uenv (cty', ty)
                             return (PInst tvis' (PConst c cty'), [], uenv')
         typify ty (PComb t (PApp ti), venv, uenv) =
-            do ntv <- newTypeVar ref
+            do ntv <- newTypeVar
                (t', venv1, uenv1) <- typify ntv (t, venv, uenv)
                case solve uenv1 ntv of
                  ty'@(PUTy ty1 ty2) -> 
@@ -405,42 +514,39 @@ preTypeOf ref senv pretm =
                  _ -> fail $ "typify: Type application argument maybe not " ++
                              "of universal type: " ++ show t
         typify ty (PComb f x, venv, uenv) =
-            do ty'' <- newTypeVar ref
+            do ty'' <- newTypeVar
                let ty' = mkFunPTy ty'' ty
                (f', venv1, uenv1) <- typify ty' (f, venv, uenv)
                (x', venv2, uenv2) <- typify (solve uenv1 ty'') 
                                        (x, venv1 ++ venv, uenv1)
                return (PComb f' x', venv1 ++ venv2, uenv2)
         typify ty (ptm@(PAs tm pty), venv, uenv) =
-            do flag <- getBenignFlag FlagAddTyAppsAuto
-               if flag && isJust (destPUTy pty) && 
-                  not (unifiableWithUType ty uenv)
-                  then do ty' <- addTyApps ref ptm pty
-                          typify ty (ty', venv, uenv)
-                  else do uenv' <- unify uenv (ty, pty)
-                          typify ty (tm, venv, uenv')
+            if addTyAppsAuto && isJust (destPUTy pty) && 
+               not (unifiableWithUType ty uenv)
+            then do ty' <- addTyApps ptm pty
+                    typify ty (ty', venv, uenv)
+            else do uenv' <- unify uenv (ty, pty)
+                    typify ty (tm, venv, uenv')
         typify ty (PAbs v bod, venv, uenv) =
             do (ty', ty'') <- case ty of
                                   PTyComb (PTyCon "fun") [ty', ty''] -> 
                                       return (ty', ty'')
-                                  _ -> do ty1 <- newTypeVar ref
-                                          ty2 <- newTypeVar ref
+                                  _ -> do ty1 <- newTypeVar
+                                          ty2 <- newTypeVar
                                           return (ty1, ty2)
                uenv0 <- unify uenv (mkFunPTy ty' ty'', ty)
                (v', venv1, uenv1) <- do (v', venv1, uenv1) <- typify ty' 
                                                                 (v, [], uenv0)
-                                        flag <- getBenignFlag 
-                                                  FlagIgnoreConstVarstruct
                                         case v' of
                                           PConst s _ -> return $! 
-                                            if flag
+                                            if ignoreConstVarstruct
                                             then (PVar s ty', [(s, ty')], uenv0)
                                             else (v', venv1, uenv1)
                                           _ -> return (v', venv1, uenv1)
                (bod', venv2, uenv2) <- typify ty'' (bod, venv1 ++ venv, uenv1)
                return (PAbs v' bod', venv2, uenv2)
         typify ty (TyPAbs tv bod, venv, uenv) =
-            do ntv <- newTypeVar ref
+            do ntv <- newTypeVar
                (bod', venv1, uenv1) <- typify ntv (bod, venv, uenv)
                uenv2 <- unify uenv1 (PUTy tv $ solve uenv1 ntv, ty)
                return (TyPAbs tv bod', venv1, uenv2)
@@ -452,25 +558,24 @@ preTypeOf ref senv pretm =
             fail $ "typify: unexpected preterm at this stage: " ++ show ptm
 
 -- Give system type vars for all free type vars, except those in tys
-        replaceUtvsWithStvs :: [Text] -> PreType -> HOL cls thry PreType
+        replaceUtvsWithStvs :: [Text] -> PreType -> ElabM s PreType
         replaceUtvsWithStvs tys pty =
             do tyvs' <- mapM subsf $ utyvars pty
                return $! pretypeSubst tyvs' pty    
-          where subsf :: PreType -> HOL cls thry (PreType, PreType)
+          where subsf :: PreType -> ElabM s (PreType, PreType)
                 subsf tv@(UTyVar f s _) =
                     if s `elem` tys then return (tv, tv)
-                    else do tv'@(STyVar n) <- newTypeVar ref
-                            when f $ modifyHOLRef ref 
-                              (\ st -> st { smallSTVS = n : smallSTVS st})
+                    else do tv'@(STyVar n) <- newTypeVar
+                            when f . modElabState $ over smallSTVS ((:) n)
                             return (tv', tv)
                 subsf _ = fail "replaceUtvsWithStvs"
 
-        pretypeInstance :: HOLType -> HOL cls thry PreType
+        pretypeInstance :: HOLType -> ElabM s PreType
         pretypeInstance = replaceUtvsWithStvs [] . pretypeOfType
 
 -- Type constraint specialization by resolving overloadings
-        resolveInterface :: PreTerm -> (PEnv -> HOL cls thry PEnv) -> PEnv -> 
-                            HOL cls thry PEnv
+        resolveInterface :: PreTerm -> (PEnv -> ElabM s PEnv) -> PEnv -> 
+                            ElabM s PEnv
         resolveInterface PApp{} _ _ =
             fail "resolveInterface: type application"
         resolveInterface (PComb f x) cont env =
@@ -497,7 +602,7 @@ preTypeOf ref senv pretm =
                                    cont =<< unify env (ty'', ty)) maps
 
 -- Push specialization throughout a preterm
-        solvePreterm :: PEnv -> PreTerm -> HOL cls thry PreTerm
+        solvePreterm :: PEnv -> PreTerm -> ElabM s PreTerm
         solvePreterm _ PApp{} =
             fail "solvePreterm: type application"
         solvePreterm env (PVar s ty) = return . PVar s $ solve env ty
@@ -511,8 +616,7 @@ preTypeOf ref senv pretm =
             liftM (TyPAbs tv) $ solvePreterm env bod
         solvePreterm env (TyPComb t ty ti) =
             let ti' = solve env ti in
-              do modifyHOLRef ref $
-                   \ st -> st { smallSTVS = smallSTVS st `union` freeSTVS0 ti' }
+              do modElabState $ over smallSTVS (`union` freeSTVS0 ti')
                  t' <- solvePreterm env t
                  return $! TyPComb t' (solve env ty) ti'
         solvePreterm env (PInst tys bod) =
@@ -530,14 +634,14 @@ preTypeOf ref senv pretm =
                                  else mzero) iface
                   pmkCV c' tys)
               <|> (return $! PConst s tys)
-          where pmkCV :: Text -> PreType -> HOL cls thry PreTerm
+          where pmkCV :: Text -> PreType -> ElabM s PreTerm
                 pmkCV name pty = 
                     do cond <- can getConstType name
                        return $! if cond then PConst name pty 
                                  else PVar name pty
 
 -- Unification of types
-        unify :: PEnv -> (PreType, PreType) -> HOL cls thry PEnv
+        unify :: PEnv -> (PreType, PreType) -> ElabM s PEnv
         unify env (ty1, ty2)
             | ty1 == ty2 = return env
             | otherwise = 
@@ -561,29 +665,29 @@ preTypeOf ref senv pretm =
                   (STyVar x, t) -> handleSTVS x t
                   (t, STyVar x) -> handleSTVS x t
                   _ -> fail $ "unify: " ++ show ty1 ++ " WITH " ++ show ty2
-          where handleSTVS :: Integer -> PreType -> HOL cls thry PEnv
+          where handleSTVS :: Integer -> PreType -> ElabM s PEnv
                 handleSTVS x t =
                   case lookup x env of
                    Just x' -> unify env (x', t)
                    _ -> case istrivial env x t of
                           Just True -> return env
                           Just False ->
-                              do st <- readHOLRef ref
+                              do stvs <- viewElabState $ view smallSTVS
                                  let t' = destSTV t
-                                 when (isJust t' && x `elem` smallSTVS st) $
-                                   modifyHOLRef ref $ \ s -> 
-                                     s { smallSTVS = fromJust t' : smallSTVS s }
+                                 when (isJust t' && x `elem` stvs) .
+                                   modElabState $ 
+                                     over smallSTVS ((:) (fromJust t'))
                                  return $! insertMap x t env
                           Nothing -> fail "handleSTVS"
 
 -- | Elaborator for 'PreType's.
-tyElab :: PreType -> HOL cls thry HOLType
-tyElab pty =
-    do ref <- newHOLRef $ TypingRefs False False [] 0
-       tyElabRef ref pty
+tyElab :: ParseContext -> PreType -> Either [ElabError] HOLType
+tyElab ctxt pty = runST $
+    do ref <- newSTRef $ initElabState ctxt
+       runReaderT (runExceptT $ tyElabRef pty) ref
 
 -- | Elaborator and type inference for 'PreTerm's.
-elab :: PreTerm -> HOL cls thry HOLTerm
-elab ptm = 
-    do ref <- newHOLRef $ TypingRefs False False [] 0
-       tmElab ref =<< preTypeOf ref [] ptm
+elab :: ParseContext -> PreTerm -> Either [ElabError] HOLTerm
+elab ctxt ptm = runST $
+    do ref <- newSTRef $ initElabState ctxt
+       runReaderT (runExceptT $ tmElab =<< preTypeOf [] ptm) ref

@@ -272,7 +272,7 @@ import qualified Data.Map as Map
 import qualified Data.Ratio as R
 import Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as Text
-import qualified Text.Show.Text as Text (Show, show)
+import qualified TextShow as Text
 import qualified Data.Tuple as T
 -- Acid State imports
 import qualified Control.Monad.State as State (MonadState, get, put)
@@ -1563,8 +1563,8 @@ textStrip :: Text -> Text
 textStrip = Text.strip
 
 -- | A re-export of 'Text.show'.
-textShow :: Text.Show a => a -> Text
-textShow = Text.fromStrict . Text.show
+textShow :: Text.TextShow a => a -> Text
+textShow = Text.fromStrict . Text.showt
 
 -- Acid State re-exports
 
