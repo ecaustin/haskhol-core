@@ -93,9 +93,7 @@ import GHC.Prim (Constraint)
 import qualified Data.HashMap.Strict as Hash
 import Data.Hashable
 import Data.Acid hiding (makeAcidic, Query, Update)
-import System.IO.Error
 import qualified Data.Text.Lazy as T
-import Control.Concurrent (threadDelay)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- TH imports
@@ -272,7 +270,7 @@ runHOLUnsafe' :: Bool -> HOL cls thry a -> String -> [String] -> IO a
 runHOLUnsafe' fl m new mods =
     do dir <- getDataDir
        let new' = dir `combine` new
-           open = blockingOpen (dir `combine` "Proofs") (Proofs Hash.empty)
+           open = openLocalState' (Proofs Hash.empty) (dir `combine` "Proofs")
        acid <- open
        prfs <- query acid GetProofs
        closeAcidState acid
@@ -567,7 +565,8 @@ liftMaybe str _ = fail str
   class such that 'show' can be used to construct a string to be used with
   'fail'.
 -}
-liftEither :: Show err => String -> Either err a -> HOL cls thry a
+--EVNOTE: Switch this to use either exceptions or monadthrow and get it out of this file?
+liftEither :: (Monad m, Show err) => String -> Either err a -> m a
 liftEither _ (Right res) = return res
 liftEither str1 (Left str2) = fail $ str1 ++ ": " ++ show str2
 
@@ -603,7 +602,7 @@ writeHOLRef ref x = HOL $ \ _ _ _ -> writeIORef ref x
 
 {-|
   Applies a given function to a 'HOLRef', modifying the stored value.
-  Functionally equivalent to 'modifyHOLRef' lifted to the 'HOL' monad.
+  Functionally equivalent to 'modifyIORef' lifted to the 'HOL' monad.
 -}
 modifyHOLRef :: IORef a -> (a -> a) -> HOL cls thry ()
 modifyHOLRef ref f = HOL $ \ _ _ _ -> modifyIORef ref f
@@ -611,23 +610,12 @@ modifyHOLRef ref f = HOL $ \ _ _ _ -> modifyIORef ref f
 -- acid primitives
 
 -- used internally by openLocalStateHOL and openLocalStateHOLBase
--- Loops on locking error
-blockingOpen :: IsAcidic st => String -> st -> IO (AcidState st) 
-blockingOpen dir st = open (0::Integer)
-    where open n = 
-              openLocalStateFrom dir st `catchIOError` 
-              (\ e -> if isAlreadyInUseError e && n < 100
-                      then do threadDelay 10000
-                              open (succ n)
-                      else ioError e)
-
 openLocalState' :: (Typeable st, IsAcidic st) 
                 => st -> String -> IO (AcidState st)
 openLocalState' ast suf =
     do dir <- getDataDir
        let dir' = dir `combine` suf `combine` show (typeOf ast)
-       blockingOpen dir' ast
-
+       openLocalStateFrom dir' ast
 
 {-| 
   Creates an 'AcidState' value from a 'HOL' computation's theory context using
@@ -652,37 +640,9 @@ closeAcidStateHOL :: (SafeCopy st, Typeable st) => AcidState st
                   -> HOL cls thry ()
 closeAcidStateHOL ast = HOL $ \ _ _ _ -> closeAcidState ast
 
-{-| 
-  A version of 'closeAcidStateHOL' that calls 'createCheckpoint' and 
-  'createArchive' first. -}
-
-{-|
-  The same as 'closeAcidStateHOL' for now as I investigate whether checkpoints 
-  are actually needed in our case.
--}
 createCheckpointAndCloseHOL :: (SafeCopy st, Typeable st) => AcidState st 
                             -> HOL cls thry ()
 createCheckpointAndCloseHOL = closeAcidStateHOL
-{-
-HOL $ \ _ _ _ ->
-    do createCheckpoint ast
-       createArchive ast
-       closeAcidState ast
--}
-
-{-
-{-| 
-  The 'cleanArchives' method removes all of the "Archive" sub-directories 
-  in a theory context that were created by 'createCheckpointAndCloseHOL'.
--}
-cleanArchives :: HOL cls thry ()
-cleanArchives = HOL $ \ _ _ _ ->
-    do dir <- getDataDir
-       let dir' = mkFilePath dir
-       shelly $ do archvs <- findWhen (\ x -> return $! 
-                                         dirname x == "Archive") dir'
-                   mapM_ rm_rf archvs
--}
 
 {-|
   A wrapper to 'update' for the 'HOL' monad.  Note that the classification of

@@ -16,8 +16,7 @@
 module HaskHOL.Core.Parser.Elab
     ( tyElab
     , elab
-    , getOverloads
-    , getInterface
+    , ElabError(..)
     ) where
 
 import HaskHOL.Core.Lib hiding (ask)
@@ -65,6 +64,13 @@ data ElabError
     | FailedInst Text SubstTrip
     | BadApplication TypeOp [HOLType]
     | TyElabError String
+
+instance Show ElabError where
+    show MissingConstant{} = "MissingConstant"
+    show MissingOverload{} = "MissingOverload"
+    show FailedInst{} = "FailedInst"
+    show BadApplication{} = "BadApplication"
+    show (TyElabError str) = str
 
 type ElabM s = ExceptT [ElabError] (ReaderT (STRef s ElabState) (ST s))
 

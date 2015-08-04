@@ -52,13 +52,15 @@ class HOLTypeRep a cls thry where
 
 instance (IsString a, a ~ Text) => HOLTypeRep a cls thry where
     toHTy x = do ctxt <- parseContext 
-                 tyElab #<< holTypeParser ctxt x
+                 pty <- liftEither "holTypeParser" $ holTypeParser ctxt x
+                 liftEither "tyElab" $ tyElab ctxt pty
 
 instance thry1 ~ thry2 => HOLTypeRep (PType thry1) cls thry2 where
     toHTy = serve
 
 instance HOLTypeRep PreType cls thry where
-    toHTy = tyElab
+    toHTy x = do ctxt <- parseContext
+                 liftEither "tyElab" $ tyElab ctxt x
 
 instance HOLTypeRep HOLType cls thry where
     toHTy = return
@@ -96,14 +98,13 @@ instance thry1 ~ thry2 => HOLTermRep (PTerm thry1) cls thry2 where
     toHTm = serve
 
 instance (IsString a, a~Text) => HOLTermRep a cls thry where
-    toHTm x = do ctxt <- parseContext 
-                 elab #<< holTermParser ctxt x
+    toHTm x = do ctxt <- parseContext
+                 ptm <- liftEither "holTermParser" $ holTermParser ctxt x
+                 liftEither "elab" $ elab ctxt ptm
                 
 instance HOLTermRep PreTerm cls thry where
-    toHTm = do ctxt <- parseContext
-               case elab ctxt of
-                 Left (e:_) -> throwHOL $ show e
-                 Right res -> return res
+    toHTm tm = do ctxt <- parseContext
+                  liftEither "elab" $ elab ctxt tm
 
 instance HOLTermRep HOLTerm cls thry where
     toHTm = return

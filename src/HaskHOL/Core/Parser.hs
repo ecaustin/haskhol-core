@@ -20,6 +20,7 @@ module HaskHOL.Core.Parser
     ( -- * Elaboration Functions
       tyElab
     , elab
+    , ElabError(..)
       -- * Parsing Functions
     , ptype
     , holTypeParser
@@ -293,7 +294,7 @@ hideConstant sym =
 -- | Specifies a 'Text' for the parser to resume recognizing as a constant.
 unhideConstant :: Text -> HOL Theory thry ()
 unhideConstant sym = 
-    Prims.overParseContext Prims.hidden (filter (\ (x, _) -> x /= sym))
+    Prims.overParseContext Prims.hidden (\ syms -> syms \\ [sym])
 
 -- Type Abbreviations
 {-| 

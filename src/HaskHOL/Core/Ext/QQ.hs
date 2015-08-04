@@ -22,7 +22,6 @@ module HaskHOL.Core.Ext.QQ
     , baseQQ
     , str
     , liftParseContext
-    , liftElabState
     ) where
 
 import HaskHOL.Core.Lib
@@ -48,18 +47,23 @@ import Language.Haskell.TH.Quote
   level.
 -}
 baseQuoter :: CtxtName thry => TheoryPath thry -> ParseContext -> QuasiQuoter
-baseQuoter thry pc = QuasiQuoter quoteBaseExps nothing nothing nothing
+baseQuoter thry ctxt = QuasiQuoter quoteBaseExps nothing nothing nothing
     where quoteBaseExps :: String -> Q Exp 
           quoteBaseExps x =
               let x' = textStrip $ pack x in
                 if textHead x' == ':'
-                   then do t <- runIO . flip (runHOLProof False) thry $
-                                  tyElab #<< holTypeParser pc (textTail x')
-                           liftProtectedExp $ protect thry t
-                   else do t <- runIO . flip (runHOLProof False) thry $
-                                  elab #<< holTermParser pc x'
-                           liftProtectedExp $ protect thry t
+                then body tyElab holTypeParser $ textTail x'
+                else body elab holTermParser x'
+          
           nothing _ = fail "quoting here not supported"
+          
+          body :: Protected b => (ParseContext -> a -> Either [ElabError] b) 
+               -> (ParseContext -> Text -> Either String a)
+               -> Text -> Q Exp
+          body efun pfun x' =
+              do px <- liftEither "quoter -- parsing" $ pfun ctxt x'
+                 res <- liftEither "quoter -- elaborating" $ efun ctxt px
+                 liftProtectedExp $ protect thry res
 
 {-| 
   An instance of 'baseQuoter' for the core theory context, 'ctxtBase'.
@@ -102,7 +106,3 @@ str = QuasiQuoter quoteStrExp nothing nothing nothing
 liftParseContext :: TheoryPath thry -> Q Exp
 liftParseContext ctxt =
     lift =<< runIO (runHOLProof False parseContext ctxt)
-
-liftElabState :: TheoryPath thry -> Q Exp
-liftElabState ctxt =
-    lift =<< runIO (runHOLProof False elabState ctxt)

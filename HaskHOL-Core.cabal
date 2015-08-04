@@ -76,7 +76,8 @@ library
       Paths_haskhol_core    
              
     ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto
-    ghc-options: -O2 -funbox-strict-fields -Wall
+                      -fno-warn-duplicate-constraints
+    ghc-options: -O2 -funbox-strict-fields -Wall -fno-warn-duplicate-constraints
 
 source-repository head
   type: git 
