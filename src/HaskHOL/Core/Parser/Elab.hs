@@ -131,8 +131,8 @@ mkGAbs tm1 tm2 =
     let fvs = frees tm1 in
       (do fTy <- mkType "fun" [typeOf tm1, typeOf tm2]
           let f = variant (frees tm1++frees tm2) $ mkVar "f" fTy
-          bodIn <- flip (foldrM (mkBinder "!")) fvs =<< 
-                     liftM1 mkGEq (mkComb f tm1) tm2
+          tm1' <- mkComb f tm1
+          bodIn <- flip (foldrM (mkBinder "!")) fvs =<< mkGEq tm1' tm2
           bndr <- mkConst "GABS" ([(tyA, fTy)], [], [])
           mkComb bndr =<< mkAbs f bodIn)
       <?> "mkGAbs"

@@ -318,10 +318,9 @@ unhideConstant sym =
   'PreType' value for it's associated 'HOLType' such that the elaborator can
   infer the correct type for polymorphic abbreviations.
 -}
-newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
-newTypeAbbrev s pty =
-    do ty <- toHTy pty
-       Parser.overParseContext Parser.typeAbbrevs (mapInsert s ty)
+newTypeAbbrev :: Text -> HOLType -> HOL Theory thry ()
+newTypeAbbrev s ty = 
+    Parser.overParseContext Parser.typeAbbrevs (mapInsert s ty)
 
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as a type 

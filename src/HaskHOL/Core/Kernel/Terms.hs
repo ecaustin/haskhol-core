@@ -322,7 +322,8 @@ varSubst theta term
         varSubstRec :: MonadThrow m => HOLTermEnv -> HOLTerm -> m HOLTerm
         varSubstRec _ tm@ConstIn{} = return tm
         varSubstRec env (CombIn s t) =
-              liftM1 mkComb (varSubstRec env s) =<< varSubstRec env t
+            do s' <- varSubstRec env s
+               mkComb s' =<< varSubstRec env t
         varSubstRec env tm@(AbsIn v s) =
             let env' = filter (\ (x, _) -> x /= v) env in
               if null env' then return tm
@@ -337,7 +338,8 @@ varSubst theta term
         varSubstRec env (TyAbsIn tv t) = 
             mkTyAbs tv =<< varSubstRec env t
         varSubstRec env (TyCombIn t ty) = 
-            liftM1 mkTyComb (varSubstRec env t) ty
+            do t' <- varSubstRec env t
+               mkTyComb t' ty
         varSubstRec env tm@VarIn{} = return $! assocd tm env tm
 
 {-|

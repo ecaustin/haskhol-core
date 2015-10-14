@@ -65,21 +65,23 @@ import GHC.Prim (Constraint)
   A redefinition of 'S.newConstant' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newConstant :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
+newConstant :: HOLTypeRep ty (HOL Theory thry) 
+            => Text -> ty -> HOL Theory thry ()
 newConstant s = S.newConstant s <=< toHTy
 
 {-| 
   A redefinition of 'S.newAxiom' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newAxiom :: HOLTermRep tm Theory thry => (Text, tm) -> HOL Theory thry HOLThm
+newAxiom :: HOLTermRep tm (HOL Theory thry) 
+         => (Text, tm) -> HOL Theory thry HOLThm
 newAxiom (s, t) = S.newAxiom s =<< toHTm t
 
 {-| 
   A redefinition of 'S.newBasicDefinition' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newBasicDefinition :: HOLTermRep tm Theory thry 
+newBasicDefinition :: HOLTermRep tm (HOL Theory thry)
                    => (Text, tm) -> HOL Theory thry HOLThm
 newBasicDefinition (lbl, t) = S.newBasicDefinition lbl =<< toHTm t
 
@@ -89,44 +91,46 @@ newBasicDefinition (lbl, t) = S.newBasicDefinition lbl =<< toHTm t
   A redefinition of 'P.makeOverloadable' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-makeOverloadable :: HOLTypeRep ty Theory thry => Text -> ty 
-                 -> HOL Theory thry ()
+makeOverloadable :: HOLTypeRep ty (HOL Theory thry)
+                 => Text -> ty -> HOL Theory thry ()
 makeOverloadable s = P.makeOverloadable s <=< toHTy
 
 {-|
   A redefinition of 'P.reduceInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-reduceInterface :: HOLTermRep tm Theory thry => Text -> tm 
-                -> HOL Theory thry ()
+reduceInterface :: HOLTermRep tm (HOL Theory thry) 
+                => Text -> tm -> HOL Theory thry ()
 reduceInterface s = P.reduceInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.overrideInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-overrideInterface :: HOLTermRep tm Theory thry => Text -> tm 
-                  -> HOL Theory thry ()
+overrideInterface :: HOLTermRep tm (HOL Theory thry) 
+                  => Text -> tm -> HOL Theory thry ()
 overrideInterface s = P.overrideInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.overloadInterface' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-overloadInterface :: HOLTermRep tm Theory thry => Text -> tm 
-                  -> HOL Theory thry ()
+overloadInterface :: HOLTermRep tm (HOL Theory thry) 
+                  => Text -> tm -> HOL Theory thry ()
 overloadInterface s = P.overloadInterface s <=< toHTm
 
 {-|
   A redefinition of 'P.prioritizeOverload' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-prioritizeOverload :: HOLTypeRep ty Theory thry => ty -> HOL Theory thry ()
+prioritizeOverload :: HOLTypeRep ty (HOL Theory thry) 
+                   => ty -> HOL Theory thry ()
 prioritizeOverload = P.prioritizeOverload <=< toHTy
 
 {-|
   A redefinition of 'P.newTypeAbbrev' to overload it for all valid type
   representations as defined by 'HOLTypeRep'.
 -}
-newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
+newTypeAbbrev :: HOLTypeRep ty (HOL Theory thry) 
+              => Text -> ty -> HOL Theory thry ()
 newTypeAbbrev s = P.newTypeAbbrev s <=< toHTy

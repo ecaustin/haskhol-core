@@ -28,7 +28,6 @@ module HaskHOL.Core.Lib
       wComb
     , ffComb
     , ffCombM
-    , liftM1
     , on
       -- * Basic Operations on Pairs
     , swap
@@ -52,6 +51,7 @@ module HaskHOL.Core.Lib
       -- * Methods for Error Handling
     , (<|>)
     , (<?>)
+    , note
     , fail'
     , failWhen
     , maybeToFail
@@ -277,14 +277,6 @@ ffCombM :: Monad m => (a -> m c) -> (b -> m d) -> (a, b) -> m (c, d)
 ffCombM f g = A.runKleisli $ A.Kleisli f A.*** A.Kleisli g
 
 {-|
-  Promotes a function to a monad, but only for its first argument, i.e.
-  
-  > liftM1 f a b === flip f b =<< a
--}
-liftM1 :: Monad m => (a -> b -> m c) -> m a -> b -> m c
-liftM1 f a b = flip f b =<< a
-
-{-|
   Re-export of the 'DF.on' combination from @Data.Function@.
 -}
 on :: (b -> b -> c) -> (a -> b) -> a -> a -> c
@@ -392,6 +384,14 @@ job <|> err = job `catch` ferr
 infix 0 <?>
 (<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
 m <?> str = m <|> (fail' str)
+
+note :: (MonadCatch m, MonadThrow m) => String -> (m a) -> m a
+note str m =
+    m `catch` (\ e -> case fromException e of
+                        Just (HOLErrorMsg str2) -> 
+                            throwM $! HOLErrorMsg (str ++ ": " ++ str2)
+                        _ ->
+                            throwM $! HOLErrorMsg (str ++ ": " ++ show e))
 
 fail' :: MonadThrow m => String -> m a
 fail' = throwM . HOLErrorMsg

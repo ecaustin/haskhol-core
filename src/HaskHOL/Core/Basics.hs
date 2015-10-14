@@ -242,9 +242,10 @@ alphaUtype _ ty = throwM $! HOLTypeError ty "alphaUtype: not a universal type."
 -}
 mkEq :: (MonadCatch m, MonadThrow m) => HOLTerm -> HOLTerm -> m HOLTerm
 mkEq l r =
-    let ty = typeOf l
-        eq = tmEq ty in
-      liftM1 mkComb (mkComb eq l) r <?> "mkEq"
+    (let ty = typeOf l
+         eq = tmEq ty in
+       do l' <- mkComb eq l
+          mkComb l' r) <?> "mkEq"
 
 {-| 
   Predicate to check if the first term is free in the second modulo
@@ -294,7 +295,8 @@ subst ilist tm =
             Nothing ->
               case t of
                 Comb f x -> 
-                  liftM1 mkComb (ssubst env f) =<< ssubst env x
+                    do f' <- ssubst env f
+                       mkComb f' =<< ssubst env x
                 Abs bv bod -> 
                   mkAbs bv =<< 
                     ssubst (filter (not . varFreeIn bv . fst) env) bod
@@ -303,7 +305,8 @@ subst ilist tm =
                     ssubst (filter (\ (_, x) -> ty `notElem` 
                                                 typeVarsInTerm x) env) bod
                 TyComb bod ty ->
-                  liftM1 mkTyComb (ssubst env bod) ty
+                    do bod' <- ssubst env bod
+                       mkTyComb bod' ty
                 _ -> return t
 
 {-|
@@ -407,7 +410,9 @@ findTermsM p = findRec []
                let tl' = if c then insert tm tl else tl
                case tm of
                  Abs _ bod -> findRec tl' bod
-                 Comb l r -> liftM1 findRec (findRec tl' l) r
+                 Comb l r -> 
+                     do l' <- findRec tl' l
+                        findRec l' r
                  TyAbs _ bod -> findRec tl' bod
                  TyComb tm' _ -> findRec tl' tm'
                  _ -> return tl'
@@ -743,7 +748,8 @@ mkBinary :: Text -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkBinary s l r = 
   (do c <- mkConst s ([]::HOLTypeEnv)
       let c' = inst [(tyA, typeOf l), (tyB, typeOf r)] c
-      liftM1 mkComb (mkComb c' l) r)
+      l' <- mkComb c' l
+      mkComb l' r)
   <?> "mkBinary: " ++ show s
 
 {-| 
@@ -752,7 +758,8 @@ mkBinary s l r =
 mkBinop :: (MonadCatch m, MonadThrow m) 
         => HOLTerm -> HOLTerm -> HOLTerm -> m HOLTerm
 mkBinop op tm1 tm2 =
-  liftM1 mkComb (mkComb op tm1) tm2 <?> "mkBinop"
+    (do tm1' <- mkComb op tm1
+        mkComb tm1' tm2) <?> "mkBinop"
 
 {-| 
   Iteratively builds a complex combination using 'mkBinop', i.e.
@@ -853,7 +860,8 @@ mkGAbs tm1 tm2 =
     let fvs = frees tm1 in
       (do fTy <- mkFunTy (typeOf tm1) $ typeOf tm2
           let f = variant (frees tm1++frees tm2) $ mkVar "f" fTy
-          bodIn <- listMkForall fvs =<< liftM1 mkGEq (mkComb f tm1) tm2
+          tm1' <- mkComb f tm1
+          bodIn <- listMkForall fvs =<< mkGEq tm1' tm2
           bndr <- mkConst "GABS" [(tyA, fTy)]
           mkComb bndr =<< mkAbs f bodIn)
       <?> "mkGAbs"
@@ -1022,7 +1030,8 @@ pattern TyEx ty tm <- TyBind "??" ty tm
 mkIff :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkIff l r =
     (do bicond <- mkConst "=" [(tyA, tyBool)]
-        liftM1 mkComb (mkComb bicond l) r)
+        l' <- mkComb bicond l
+        mkComb l' r)
     <?> "mkIff"
 
 {-|

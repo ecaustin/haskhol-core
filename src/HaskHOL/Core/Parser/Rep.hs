@@ -45,36 +45,33 @@ import Data.String
   current working theory.  This enables us to safely have conversions between 
   representations that are theory dependent.
 -}
-class HOLTypeRep a cls thry where
+class HOLTypeRep a m where
     -- | Conversion from alternative type @a@ to 'HOLType'.
-    toHTy :: a -> HOL cls thry HOLType
+    toHTy :: a -> m HOLType
 
-instance (IsString a, a ~ Text) => HOLTypeRep a cls thry where
+instance HOLTypeRep (PType thry) (HOL cls thry) where
+    toHTy = serve
+
+instance (IsString a, a ~ Text) => HOLTypeRep a (HOL cls thry) where
     toHTy x = do ctxt <- parseContext 
                  pty <- holTypeParser ctxt x
                  tyElab ctxt pty
 
-instance thry1 ~ thry2 => HOLTypeRep (PType thry1) cls thry2 where
-    toHTy = serve
-
-instance HOLTypeRep PreType cls thry where
+instance HOLTypeRep PreType (HOL cls thry) where
     toHTy x = do ctxt <- parseContext
                  tyElab ctxt x
 
-instance HOLTypeRep HOLType cls thry where
+instance Monad m => HOLTypeRep HOLType m where
     toHTy = return
 
-instance HOLTypeRep (Maybe HOLType) cls thry where
-    toHTy Nothing = fail "toHTy: Nothing"
-    toHTy (Just ty) = return ty
-
-instance Show a => HOLTypeRep (Either a HOLType) cls thry where
-    toHTy (Left err) = fail $ show err
-    toHTy (Right ty) = return ty
-
-instance (cls ~ cls1, thry ~ thry1) => 
-         HOLTypeRep (HOL cls1 thry1 HOLType) cls thry where
+instance HOLTypeRep (m HOLType) m where
     toHTy = id
+
+instance (MonadThrow m1, m1 ~ Catch, MonadThrow m2) => 
+         HOLTypeRep (m1 HOLType) m2 where
+    toHTy m = case runCatch m of
+                Right res -> return res
+                Left err  -> throwM err
 
 -- Terms
 {-|
@@ -89,36 +86,33 @@ instance (cls ~ cls1, thry ~ thry1) =>
   current working theory.  This enables us to safely have conversions between 
   representations that are theory dependent.
 -}
-class HOLTermRep a cls thry where
+class HOLTermRep a m where
     -- | Conversion from alternative type @a@ to 'HOLTerm'.
-    toHTm :: a -> HOL cls thry HOLTerm
+    toHTm :: a -> m HOLTerm
 
-instance thry1 ~ thry2 => HOLTermRep (PTerm thry1) cls thry2 where
+instance HOLTermRep (PTerm thry) (HOL cls thry) where
     toHTm = serve
 
-instance (IsString a, a~Text) => HOLTermRep a cls thry where
+instance (IsString a, a ~ Text) => HOLTermRep a (HOL cls thry) where
     toHTm x = do ctxt <- parseContext
                  ptm <- holTermParser ctxt x
                  elab ctxt ptm
                 
-instance HOLTermRep PreTerm cls thry where
+instance HOLTermRep PreTerm (HOL cls thry) where
     toHTm tm = do ctxt <- parseContext
                   elab ctxt tm
 
-instance HOLTermRep HOLTerm cls thry where
+instance Monad m => HOLTermRep HOLTerm m where
     toHTm = return
 
-instance HOLTermRep (Maybe HOLTerm) cls thry where
-    toHTm Nothing = fail "toHTm: Nothing"
-    toHTm (Just tm) = return tm
-
-instance Show a => HOLTermRep (Either a HOLTerm) cls thry where
-    toHTm (Left err) = fail $ show err
-    toHTm (Right tm) = return tm
-
-instance (cls ~ cls1, thry ~ thry1) => 
-         HOLTermRep (HOL cls1 thry1 HOLTerm) cls thry where
+instance HOLTermRep (m HOLTerm) m where
     toHTm = id
+
+instance (MonadThrow m1, m1 ~ Catch, MonadThrow m2) => 
+         HOLTermRep (m1 HOLTerm) m2 where
+    toHTm m = case runCatch m of
+                Right res -> return res
+                Left err  -> throwM err
 
 -- Theorems
 {-|
@@ -133,20 +127,21 @@ instance (cls ~ cls1, thry ~ thry1) =>
   current working theory.  This enables us to safely have conversions between 
   representations that are theory dependent.
 -}
-class HOLThmRep a cls thry where
+class HOLThmRep a m where
     -- | Conversion from alternative type @a@ to 'HOLThm'.
-    toHThm :: a -> HOL cls thry HOLThm
+    toHThm :: a -> m HOLThm
 
-instance thry1 ~ thry2 => HOLThmRep (PThm thry1) cls thry2 where
+instance HOLThmRep (PThm thry) (HOL cls thry) where
     toHThm = serve
 
-instance HOLThmRep HOLThm cls thry where
+instance Monad m => HOLThmRep HOLThm m where
     toHThm = return
 
-instance Show a => HOLThmRep (Either a HOLThm) cls thry where
-    toHThm (Left err) = fail $ show err
-    toHThm (Right thm) = return thm
-
-instance (cls ~ cls1, thry ~ thry1) => 
-         HOLThmRep (HOL cls1 thry1 HOLThm) cls thry where
+instance HOLThmRep (m HOLThm) m where
     toHThm = id
+
+instance (MonadThrow m1, m1 ~ Catch, MonadThrow m2) => 
+         HOLThmRep (m1 HOLThm) m2 where
+    toHThm m = case runCatch m of
+                 Right res -> return res
+                 Left err  -> throwM err
