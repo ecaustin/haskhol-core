@@ -57,7 +57,7 @@ baseQuoter thry ctxt = QuasiQuoter quoteBaseExps nothing nothing nothing
           
           nothing _ = fail "quoting here not supported"
           
-          body :: Protected b => (ParseContext -> a -> Either [ElabError] b) 
+          body :: Protected b => (ParseContext -> a -> Either String b) 
                -> (ParseContext -> Text -> Either String a)
                -> Text -> Q Exp
           body efun pfun x' =

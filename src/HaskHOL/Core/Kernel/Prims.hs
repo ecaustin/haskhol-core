@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, PatternSynonyms, 
+{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, GADTs, PatternSynonyms, 
              TemplateHaskell #-}
 
 {-|
@@ -55,11 +55,18 @@ module HaskHOL.Core.Kernel.Prims
       -- * HOL theorems
     , HOLThm(..)
     , pattern Thm
+      -- Primitive Error Types
+    , HOLPrimError(..)
     ) where
 
-import HaskHOL.Core.Lib
+import Control.DeepSeq (NFData, rnf)
+import Control.Monad.Catch (Exception)
 
+import Data.SafeCopy (deriveSafeCopy, base)
+import Data.Typeable (Typeable)
 import Data.Hashable
+import Data.Text.Lazy (Text)
+
 import GHC.Generics
 
 import Language.Haskell.TH.Lift
@@ -296,6 +303,30 @@ instance Hashable HOLThm
 
 -- | The pattern synonym for HOL theorems.
 pattern Thm as c <- ThmIn as c
+
+-- Error types
+data HOLPrimError where
+    HOLTypeOpError :: TypeOp -> String -> HOLPrimError
+    HOLTypeError   :: HOLType -> String -> HOLPrimError
+    HOLTermError   :: HOLTerm -> String -> HOLPrimError 
+    HOLThmError    :: HOLThm -> String -> HOLPrimError
+    HOLMiscError   :: Show a => a -> String -> HOLPrimError
+    HOLErrorMsg    :: String -> HOLPrimError
+    HOLExhaustiveWarning :: String -> HOLPrimError
+    HOLMZero       :: HOLPrimError
+
+instance Show HOLPrimError where
+    show (HOLTypeOpError _ str) = str
+    show (HOLTypeError _ str) = str
+    show (HOLTermError _ str) = str
+    show (HOLThmError  _ str) = str
+    show (HOLMiscError x str) = str ++ "<* witness - " ++ show x ++ " *>"
+    show (HOLErrorMsg  str) = str
+    show (HOLExhaustiveWarning str) = 
+        "<* exhaustive case warning - " ++ str ++ " *>"
+    show HOLMZero = "<* mzero *>"
+
+instance Exception HOLPrimError
 
 {- 
   Deepseq instances for the primitive data types.  These are included as they 

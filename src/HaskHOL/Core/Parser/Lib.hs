@@ -56,6 +56,7 @@ module HaskHOL.Core.Parser.Lib
     , mymany1
     , mysepBy1
     , mytry
+    , (<|>)
       -- * Pretty Printer Flags
     , FlagRevInterface(..)
     , FlagPrintAllThm(..)
@@ -73,14 +74,14 @@ module HaskHOL.Core.Parser.Lib
     , updateState
     ) where
 
-import HaskHOL.Core.Lib hiding ((<?>))
+import HaskHOL.Core.Lib hiding ((<|>), (<?>))
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 
 import HaskHOL.Core.Parser.Prims
 
-import Text.Parsec hiding (runParser, setState, getState, updateState
-                          ,ParseError, (<|>))
+import Text.Parsec hiding 
+    (runParser, setState, getState, updateState,ParseError)
 import qualified Text.Parsec as P
 import Text.Parsec.Language
 import Text.Parsec.Token
@@ -254,10 +255,10 @@ choiceSym ops = choice $ map mysymbol ops
 -- | Selects the first matching reserved operator.
 choiceId :: [Text] -> MyParser Text
 choiceId ops = choice $ map 
-               (\ s -> try $ do s' <- myidentifier <|> myoperator
-                                if s' == s
-                                   then return s
-                                   else fail "choiceId") ops
+               (\ s -> mytry $ do s' <- myidentifier <|> myoperator
+                                  if s' == s
+                                     then return s
+                                     else fail "choiceId") ops
 
 -- | A version of 'whiteSpace' for our language.
 mywhiteSpace :: MyParser ()

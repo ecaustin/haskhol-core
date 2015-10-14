@@ -1,5 +1,4 @@
 {-# LANGUAGE MultiParamTypeClasses, PatternSynonyms #-}
-
 {-|
   Module:    HaskHOL.Core.Kernel.Terms
   Copyright: (c) The University of Kansas 2013
@@ -187,12 +186,12 @@ mkVar :: Text -> HOLType -> HOLTerm
 mkVar = VarIn
 
 {-| 
-  Constructs a term abstraction of a given bound term and body term.  Fails with
-  'Left' if the bound term is not a variable.
+  Constructs a term abstraction of a given bound term and body term.  
+  Fails if the bound term is not a variable.
 -}
-mkAbs :: HOLTerm -> HOLTerm -> Either String HOLTerm
-mkAbs bv@VarIn{} bod = Right $ AbsIn bv bod
-mkAbs _ _ = Left "mkAbs"
+mkAbs :: MonadThrow m => HOLTerm -> HOLTerm -> m HOLTerm
+mkAbs bv@VarIn{} bod = return $! AbsIn bv bod
+mkAbs bv _ = throwM $! HOLTermError bv "mkAbs"
 
 {-|
   Constructs a combination of two given terms.  Fails with 'Left' in the
@@ -202,47 +201,47 @@ mkAbs _ _ = Left "mkAbs"
 
   * The types of the two terms does not agree.
 -}
-mkComb :: HOLTerm -> HOLTerm -> Either String HOLTerm
+mkComb :: MonadThrow m => HOLTerm -> HOLTerm -> m HOLTerm
 mkComb f a = 
     case typeOf f of
       (TyAppIn (TyPrimitiveIn "fun" _) (ty:_)) -> 
           if typeOf a `tyAConv` ty
-          then Right $ CombIn f a
-          else Left "mkComb: argument type mismatch."
-      _ -> Left "mkComb: argument not of function type."
+          then return $! CombIn f a
+          else throwM $! HOLTermError a "mkComb: argument type mismatch."
+      _ -> throwM $! HOLTermError f "mkComb: argument not of function type."
 
 {-| 
   Destructs a term variable, returning its name and type.  Fails with 'Nothing'
   if the provided term is not a variable.
 -}
-destVar :: HOLTerm -> Maybe (Text, HOLType)
-destVar (VarIn s ty) = Just (s, ty)
-destVar _ = Nothing
+destVar :: MonadThrow m => HOLTerm -> m (Text, HOLType)
+destVar (VarIn s ty) = return (s, ty)
+destVar tm = throwM $! HOLTermError tm "destVar"
 
 {-|
   Destructs a term constant, returning its name and type.  Note that no constant
   tag information is returned.  Fails with 'Nothing' if the provided term is
   not a constant.
 -}
-destConst :: HOLTerm -> Maybe (Text, HOLType)
-destConst (ConstIn s ty _) = Just (s, ty)
-destConst _ = Nothing
+destConst :: MonadThrow m => HOLTerm -> m (Text, HOLType)
+destConst (ConstIn s ty _) = return (s, ty)
+destConst tm = throwM $! HOLTermError tm "destConst"
 
 {-|
   Destructs a term combination, returning its function and argument terms.  
   Fails with 'Nothing' if the provided term is not a combination.
 -}
-destComb :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destComb (CombIn f x) = Just (f, x)
-destComb _ = Nothing
+destComb :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
+destComb (CombIn f x) = return (f, x)
+destComb tm = throwM $! HOLTermError tm "destComb"
 
 {-|
   Destructs a term abstraction, returning its bound term and body term. Fails
   with 'Nothing' if the provided term is not an abstraction.
 -}
-destAbs :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destAbs (AbsIn v b) = Just (v, b)
-destAbs _ = Nothing
+destAbs :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
+destAbs (AbsIn v b) = return (v, b)
+destAbs tm = throwM $! HOLTermError tm "destAbs"
 
 -- | Returns a list of all free, term variables in a term.
 frees :: HOLTerm -> [HOLTerm]
@@ -311,25 +310,25 @@ typeVarsInTerms =
   Substitution fails with 'Nothing' in the case where a bad substitution list is
   presented.
 -}
-varSubst :: HOLTermEnv -> HOLTerm -> Maybe HOLTerm
-varSubst [] term = Just term
+varSubst :: MonadThrow m => HOLTermEnv -> HOLTerm -> m HOLTerm
+varSubst [] term = return term
 varSubst theta term
-    | all validPair theta = hush $ varSubstRec theta term
-    | otherwise = Nothing
+    | all validPair theta = varSubstRec theta term
+    | otherwise = throwM $! HOLTermError term "varSubst"
   where validPair :: (HOLTerm, HOLTerm) -> Bool
         validPair (VarIn _ ty, t) = ty `tyAConv` typeOf t
         validPair _ = False
 
-        varSubstRec :: HOLTermEnv -> HOLTerm -> Either String HOLTerm
-        varSubstRec _ tm@ConstIn{} = Right tm
+        varSubstRec :: MonadThrow m => HOLTermEnv -> HOLTerm -> m HOLTerm
+        varSubstRec _ tm@ConstIn{} = return tm
         varSubstRec env (CombIn s t) =
               liftM1 mkComb (varSubstRec env s) =<< varSubstRec env t
         varSubstRec env tm@(AbsIn v s) =
             let env' = filter (\ (x, _) -> x /= v) env in
-              if null env' then Right tm
+              if null env' then return tm
               else do s' <- varSubstRec env' s
                       if s' == s 
-                         then Right tm
+                         then return tm
                          else if any (\ (x, t) -> varFreeIn v t && 
                                                   varFreeIn x s) env'
                               then let v' = variant [s'] v in
@@ -339,7 +338,7 @@ varSubst theta term
             mkTyAbs tv =<< varSubstRec env t
         varSubstRec env (TyCombIn t ty) = 
             liftM1 mkTyComb (varSubstRec env t) ty
-        varSubstRec env tm@VarIn{} = Right $ lookupd tm env tm
+        varSubstRec env tm@VarIn{} = return $! lookupd tm env tm
 
 {-|
   The @Inst@ class provides the framework for type instantiation in HaskHOL.
@@ -375,30 +374,30 @@ class TypeSubst a b => Inst a b where
       method is not exposed to the user.  Call the 'inst' or 'instFull' function
       instead.
     -}
-    instTyAbs :: HOLTermEnv -> [(a, b)] -> HOLTerm -> Either HOLTerm HOLTerm
+    instTyAbs :: (MonadCatch m, MonadThrow m) 
+              => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
 
 instance Inst HOLType HOLType where
     instTyAbs env tyenv tm@(TyAbsIn tv t) = 
         let tyenv' = filter (\ (x, _) -> x /= tv) tyenv in
-          if null tyenv' then Right tm
+          if null tyenv' then return tm
           else if any (\ (x, r) -> tv `elem` tyVars r && 
                                    x `elem` typeVarsInTerm t) tyenv'
                -- avoid capture by renaming type variable
                then let tvt = typeVarsInTerm t
                         tvpatts = map fst tyenv'
-                        tvrepls = catTyVars . mapMaybe (`lookup` tyenv') $
+                        tvrepls = catTyVars . mapFilter (`lookup` tyenv') $
                                     tvt `intersect` tvpatts
                         tv' = variantTyVar ((tvt \\ tvpatts) `union` tvrepls) 
                                 tv in
-                      liftM (fromRight . mkTyAbs tv') $
-                        instRec env ((tv, tv'):tyenv') t
-               else liftM (fromRight . mkTyAbs tv) $ instRec env tyenv' t
-    instTyAbs _ _ tm = Right tm
+                      mkTyAbs tv' =<< instRec env ((tv, tv'):tyenv') t
+               else mkTyAbs tv =<< instRec env tyenv' t
+    instTyAbs _ _ tm = return tm
 
 instance Inst TypeOp TypeOp where
     instTyAbs env tyenv (TyAbsIn tv t) = 
-        liftM (fromRight . mkTyAbs tv) $ instRec env tyenv t
-    instTyAbs _ _ tm = Right tm
+        mkTyAbs tv =<< instRec env tyenv t
+    instTyAbs _ _ tm = return tm
 
 instance Inst TypeOp HOLType where
     instTyAbs env tyenv (TyAbsIn tv t) =
@@ -407,13 +406,12 @@ instance Inst TypeOp HOLType where
         -- avoid capture by renaming type variable
         then let tvbs = typeOpVarsInTerm t
                  tvpatts = map fst tyenv
-                 tvrepls = catTyVars . mapMaybe (`lookup` tyenv) $
+                 tvrepls = catTyVars . mapFilter (`lookup` tyenv) $
                              tvbs `intersect` tvpatts
                  tv' = variantTyVar tvrepls tv in
-               liftM (fromRight . mkTyAbs tv') . 
-                 instRec env tyenv $ inst [(tv, tv')] t
-        else liftM (fromRight . mkTyAbs tv) $ instRec env tyenv t
-    instTyAbs _ _ tm = Right tm
+               mkTyAbs tv' =<< instRec env tyenv (inst [(tv, tv')] t)
+        else mkTyAbs tv =<< instRec env tyenv t
+    instTyAbs _ _ tm = return tm
 
 {-|
   Type instantiation for terms.  Accepts the same types of substitution
@@ -427,43 +425,43 @@ instance Inst TypeOp HOLType where
 inst :: Inst a b => [(a, b)] -> HOLTerm -> HOLTerm
 inst [] tm = tm
 inst theta tm = 
-    case instRec [] theta tm of
+    case runCatch $ instRec [] theta tm of
       Right res -> res
       Left _ -> tm
 
 -- Used internally by inst and instTyAbs both.  Not exposed to the user.
-instRec :: Inst a b => HOLTermEnv -> [(a, b)] -> HOLTerm -> 
-                       Either HOLTerm HOLTerm
+instRec :: (MonadCatch m, MonadThrow m, Inst a b) 
+        => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
 instRec env tyenv tm@(VarIn n ty) =
     let tm' = mkVar n $ typeSubst tyenv ty in
-      if lookupd tm' env tm == tm then Right tm' 
-      else Left tm' -- Clash
+      if lookupd tm' env tm == tm then return tm' 
+      else throwM $! HOLTermError tm' "instRec: clash"
 instRec _ tyenv (ConstIn s ty tag) =
     let ty' = typeSubst tyenv ty in
-      Right $ ConstIn s ty' tag
+      return $! ConstIn s ty' tag
 instRec env tyenv (CombIn f x) =
     do f' <- instRec env tyenv f
        x' <- instRec env tyenv x
-       return . fromRight $ mkComb f' x'
+       mkComb f' x'
 instRec env tyenv (AbsIn y@(VarIn _ ty) t) =
     do y'<- instRec [] tyenv y
-       case instRec ((y', y):env) tyenv t of
-         Right t' -> return . fromRight $ mkAbs y' t'
-         e@(Left w') -> 
-             if w' /= y' then e
-             else do ifrees <- mapM (instRec [] tyenv) $ frees t
-                     case variant ifrees y' of
-                       (VarIn x _) -> 
-                           let z = mkVar x ty in
-                             instRec env tyenv . fromRight $ 
-                               mkAbs z #<< varSubst [(y, z)] t
-                       _ -> e
+       ((do t' <- instRec ((y', y):env) tyenv t
+            mkAbs y' t') `catch` 
+        (\ e@(HOLTermError w' _) ->
+           if w' /= y' then throwM e
+           else do ifrees <- mapM (instRec [] tyenv) $ frees t
+                   case variant ifrees y' of
+                     (VarIn x _) -> 
+                         let z = mkVar x ty in
+                           instRec env tyenv =<< mkAbs z =<< varSubst [(y, z)] t
+                     _ -> throwM e))
 instRec env tyenv tm@TyAbsIn{} = instTyAbs env tyenv tm
 instRec env tyenv (TyCombIn tm ty) =
     do tm' <- instRec env tyenv tm
        let ty' = typeSubst tyenv ty
-       return . fromRight $ mkTyComb tm' ty'
-instRec _ _ AbsIn{} = error "instRec: bad term construction."
+       mkTyComb tm' ty'
+instRec _ _ tm@AbsIn{} = throwM $! HOLTermError tm 
+    "instRec: bad term construction."
 
 {-| 
   A version of 'inst' that accepts a triplet of type substitution environments.
@@ -472,25 +470,25 @@ instFull :: SubstTrip -> HOLTerm -> HOLTerm
 instFull (tyenv, tyOps, opOps) = inst opOps . inst tyOps . inst tyenv
 
 {-|
-  A simplified version of 'inst' that works only for term constants.  Fails with
-  'Nothing' if the provided term is not a constant.  Used internally by 
-  'mkConst' to guarantee that only constants are constructed.
+  A simplified version of 'inst' that works only for term constants.  
+  Fails if the provided term is not a constant.  
+  Used internally by 'mkConst' to guarantee that only constants are constructed.
 -}
-instConst :: TypeSubst a b => HOLTerm -> [(a, b)] -> Maybe HOLTerm
+instConst :: (MonadThrow m, TypeSubst a b) => HOLTerm -> [(a, b)] -> m HOLTerm
 instConst (ConstIn s uty tag) tyenv = 
     let ty = typeSubst tyenv uty in
-      Just $ ConstIn s ty tag
-instConst _ _ = Nothing
+      return $! ConstIn s ty tag
+instConst tm _ = throwM $! HOLTermError tm "instConst"
 
 {-| 
   A version of 'instConst' that accepts a triplet of type substitition 
   environments.
 -}
-instConstFull :: HOLTerm -> SubstTrip -> Maybe HOLTerm
+instConstFull :: MonadThrow m => HOLTerm -> SubstTrip -> m HOLTerm
 instConstFull (ConstIn s uty tag) tyenv = 
     let ty = typeSubstFull tyenv uty in
-      Just $ ConstIn s ty tag
-instConstFull _ _ = Nothing
+      return $! ConstIn s ty tag
+instConstFull tm _ = throwM $! HOLTermError tm "instConstFull"
 
 -- | Constructs an instance of the HOL equality constant, @=@, for a given type.
 tmEq :: HOLType -> HOLTerm
@@ -511,22 +509,22 @@ isEq _ = False
 
 {-| 
   Constructs an equation term given the left and right hand side arguments.  
-  Fails with 'Left' if the types of the terms are not alpha-equivalent.
+  Fails if the types of the terms are not alpha-equivalent.
 -}
-primMkEq :: HOLTerm -> HOLTerm -> Maybe HOLTerm
+primMkEq :: MonadThrow m => HOLTerm -> HOLTerm -> m HOLTerm
 primMkEq l r
-    | typeOf l `tyAConv` typeOf r =
-        hush $ liftM1 mkComb (mkComb (tmEq $ typeOf l) l) r
-    | otherwise = Nothing
+    | ty `tyAConv` typeOf r =
+        return $! CombIn (CombIn (tmEq ty) l) r
+    | otherwise = throwM $! HOLTermError l "primMkEq"
+  where ty = typeOf l
 
 {-|
   Destructs an equation term, returning the left and right hand side arguments.
   Fails with 'Nothing' if the term is not an equation, i.e. of the form @l = r@.
 -}
-destEq :: HOLTerm -> Maybe (HOLTerm, HOLTerm)
-destEq (CombIn (CombIn (ConstIn "=" _ PrimitiveIn) l) r) =
-    Just (l, r)
-destEq _ = Nothing
+destEq :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
+destEq (CombIn (CombIn (ConstIn "=" _ PrimitiveIn) l) r) = return (l, r)
+destEq tm = throwM $! HOLTermError tm "destEq"
 
 {-|
   Renames a term variable to avoid sharing a name with any of a given list of
@@ -599,9 +597,10 @@ isTyComb _ = False
 
   * The bound type is not a small type variable.
 -}
-mkTyAbs :: HOLType -> HOLTerm -> Either String HOLTerm
-mkTyAbs tv@(TyVarIn True _) bod = Right $ TyAbsIn tv bod
-mkTyAbs _ _ = Left "mkTyAbs: first argument not a small type variable."
+mkTyAbs :: MonadThrow m => HOLType -> HOLTerm -> m HOLTerm
+mkTyAbs tv@(TyVarIn True _) bod = return $! TyAbsIn tv bod
+mkTyAbs ty _ = throwM $! HOLTypeError ty 
+    "mkTyAbs: first argument not a small type variable."
 
 {-|
   Constructs a type combination term given a body term and a type argument to 
@@ -611,31 +610,32 @@ mkTyAbs _ _ = Left "mkTyAbs: first argument not a small type variable."
 
   * The type of the body term is not a universal type.
 -}
-mkTyComb :: HOLTerm -> HOLType -> Either String HOLTerm
+mkTyComb :: MonadThrow m => HOLTerm -> HOLType -> m HOLTerm
 mkTyComb tm ty
     | isSmall ty =
         case typeOf tm of
           UTypeIn{} -> 
-              Right $ TyCombIn tm ty
-          _ -> Left "mkTyComb: term must have universal type."
+              return $! TyCombIn tm ty
+          _ -> throwM $! HOLTermError tm 
+                 "mkTyComb: term must have universal type."
     | otherwise =
-        Left "mkTyComb: type argument not small."
+        throwM $! HOLTypeError ty "mkTyComb: type argument not small."
 
 {-| 
   Destructs a type abstraction, returning its bound type and body term.  Fails
   with 'Nothing' if the provided term is not a type abstraction.
 -}
-destTyAbs :: HOLTerm -> Maybe (HOLType, HOLTerm)
-destTyAbs (TyAbsIn tv bod) = Just (tv, bod)
-destTyAbs _ = Nothing
+destTyAbs :: MonadThrow m => HOLTerm -> m (HOLType, HOLTerm)
+destTyAbs (TyAbsIn tv bod) = return (tv, bod)
+destTyAbs tm = throwM $! HOLTermError tm "destTyAbs"
 
 {-|
   Destructs a type combination, returning its body term and type argument.
   Fails with 'Nothing' if the provided term is not a type combination.
 -}
-destTyComb :: HOLTerm -> Maybe (HOLTerm, HOLType)
-destTyComb (TyCombIn tm ty) = Just (tm, ty)
-destTyComb _ = Nothing
+destTyComb :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLType)
+destTyComb (TyCombIn tm ty) = return (tm, ty)
+destTyComb tm = throwM $! HOLTermError tm "destTyComb"
 
 initTermConstants :: Map Text HOLTerm
 initTermConstants = mapFromList [("=", tmEq tyA)]

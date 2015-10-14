@@ -50,7 +50,7 @@ module HaskHOL.Core.Parser.TypeParser
     , holTypeParser
     ) where
 
-import HaskHOL.Core.Lib
+import HaskHOL.Core.Lib hiding ((<|>))
 import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.Prims
 import HaskHOL.Core.Kernel.Types

@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Lib
   Copyright: (c) The University of Kansas 2013
@@ -59,21 +59,16 @@ module HaskHOL.Core.Lib
     , revLookupd
     , revAssocd
       -- * Methods for Error Handling
+    , (<|>)
+    , (<?>)
+    , failWhen
+    , mzero
+    , try'
+    , test'
     , can
     , can'
     , canNot
     , check
-    , note
-    , hush
-    , fromRight
-    , fromRightM
-    , fromJustM
-    , LiftOption(..)
-    , Note(..)
-    , (#<<) 
-    , (<#<)
-    , (<#>)
-    , (<#?>)
       -- * Methods for Function Repetition
     , funpow 
     , funpowM
@@ -221,24 +216,12 @@ module HaskHOL.Core.Lib
         Re-exports a few type families used for basic, type-level boolean
         computation.
       -}
-    , module Control.Applicative {-| 
-        Re-exports 'Applicative', 'Alternative', and the utility functions for
-        use with the 'HOL' monad.
-      -}
     , module Control.DeepSeq {-|
         Re-exports the entirety of the library, but currently only 'NFData' is
         used.  Necessary for using the "Criterion" benchmarking library.
       -}
     , module Control.Monad {-|
         Re-exports the entirety of the library for use with the 'HOL' monad.
-      -}
-    , module Data.Maybe {-|
-        Re-exports the entirety of the library.  Used primarily to make
-        interacting with primitive rules easier at later points in the system.
-      -}
-    , module Data.Either {-|
-        Re-exports the entirety of the library.  Used primarily to make
-        interacting with primitive rules easier at later points in the system.
       -}
     , module Data.Data {-|
         Re-exports the 'Data' and 'Typeable' class names for use in deriving 
@@ -248,19 +231,26 @@ module HaskHOL.Core.Lib
         Re-exports the entirety of the library for use with the 'HOL' monad's
         acid state primitives.
       -}
+    , module Control.Monad.Catch {-|
+        Re-exports the entirety of the library, serving as the basis for our
+        extensible exception handling.
+      -}
+    , module Control.Monad.Catch.Pure {-|
+        Re-exports the entirety of the library, serving as a pure alternative
+        to the methods in @Control.Monad.Catch@
+      -}
     ) where
 
+import HaskHOL.Core.Kernel.Prims (HOLPrimError(..))
 import HaskHOL.Core.Lib.Families
 
 -- Libraries re-exported in their entirety, except for applicative
-import Control.Applicative hiding 
-    ((<$>), Const, WrappedMonad, WrappedArrow, ZipList)
 import Control.DeepSeq
-import Control.Monad
-import Data.Maybe
-import Data.Either
+import Control.Monad hiding (mzero)
 import Data.Data (Data, Typeable)
 import Data.SafeCopy
+import Control.Monad.Catch
+import Control.Monad.Catch.Pure
 
 -- Libraries containing Re-exports
 import qualified Control.Arrow as A
@@ -269,6 +259,7 @@ import qualified Data.Function as DF (on)
 import qualified Data.List as L
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Maybe as Maybe
 import qualified Data.Ratio as R
 import Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as Text
@@ -451,7 +442,7 @@ revAssoc = revLookup
 
 -- | A version of 'lookup' that defaults to a provided value rather than fail.
 lookupd :: Eq a => a -> [(a, b)] -> b -> b
-lookupd x xs b = fromMaybe b $ lookup x xs
+lookupd x xs b = maybe b id $ lookup x xs
 
 -- | An alias to 'lookupd' for HOL users who are more familiar with this name.
 assocd :: Eq a => a -> [(a, b)] -> b -> b
@@ -461,7 +452,7 @@ assocd = lookupd
   A version of 'revLookup' that defaults to a provided value rather than fail.
 -}
 revLookupd :: Eq a => a -> [(b, a)] -> b -> b
-revLookupd x xs b = fromMaybe b $ revLookup x xs
+revLookupd x xs b = maybe b id $ revLookup x xs
 
 {-| 
   An alias to 'revLookupd' for HOL users who are more familiar with this name.
@@ -470,11 +461,43 @@ revAssocd :: Eq a => a -> [(b, a)] -> b -> b
 revAssocd = revLookupd
 
 -- error handling and checking
+
+infixl 3 <|>
+-- | A version of the alternative operation based on 'MonadCatch'.
+(<|>) :: forall m a. MonadCatch m => m a -> m a -> m a
+job <|> err = job `catch` ferr
+    where ferr :: SomeException -> m a
+          ferr _ = err
+
+infix 0 <?>
+(<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
+m <?> str = m <|> (throwM $! HOLErrorMsg str)
+
+failWhen :: (MonadCatch m, MonadThrow m) => m Bool -> String -> m ()
+failWhen m str =
+    do cond <- m
+       when cond . throwM $! HOLErrorMsg str
+
+mzero :: MonadThrow m => m a
+mzero = throwM $! HOLMZero
+
+try' :: Catch a -> a
+try' m =
+    case runCatch m of
+      Right res -> res
+      _         -> error "try'"
+
+test' :: Catch a -> Bool
+test' m =
+    case runCatch m of
+      Right{} -> True
+      _       -> False
+
 {-| 
   Returns a boolean value indicating whether a monadic computation succeeds or
   fails.  The '<|>' operator is used for branching.
 -}
-can :: (Alternative m, Monad m) => (a -> m b) -> a -> m Bool
+can :: MonadCatch m => (a -> m b) -> a -> m Bool
 can f x = (f x >> return True) <|> return False
 
 {-| 
@@ -482,7 +505,7 @@ can f x = (f x >> return True) <|> return False
   Turns a potentially failing monadic computation into a guarded, always 
   successful monadic computation.
 -}
-can' :: (Alternative m, Monad m) => (a -> m b) -> a -> m (Maybe b)
+can' :: MonadCatch m => (a -> m b) -> a -> m (Maybe b)
 can' f x = (f x >>= \ x' -> return (Just x')) <|> return Nothing
 
 {-| 
@@ -490,7 +513,7 @@ can' f x = (f x >>= \ x' -> return (Just x')) <|> return Nothing
 
   > \ f -> liftM not . can f
 -}
-canNot :: (Alternative m, Monad m) => (a -> m b) -> a -> m Bool
+canNot :: MonadCatch m => (a -> m b) -> a -> m Bool
 canNot f x = (f x >> return False) <|> return True
 
 {-| 
@@ -501,113 +524,6 @@ check :: (a -> Bool) -> a -> Maybe a
 check p x
   | p x = Just x
   | otherwise = Nothing
-
--- | Takes a default error value to convert a 'Maybe' type to an 'Either' type.
-note :: a -> Maybe b -> Either a b
-note l Nothing = Left l
-note _ (Just r) = Right r
-
-{-| 
-  Suppresses the error value of an 'Either' type to convert it to a 'Maybe' 
-  type.
--}
-hush :: Either a b -> Maybe b
-hush (Left _) = Nothing
-hush (Right r) = Just r
-
-{-|
-  An analogue of 'fromJust' for the 'Either' type.  Fails with 'error' when
-  provided a 'Left' value, so take care only to use it in cases where you know 
-  you are working with a 'Right' value or are catching exceptions. 
--}
-fromRight :: Either err a -> a
-fromRight (Right res) = res
-fromRight _ = error "fromRight"
-
-{-|
-  A version of 'fromRight' that maps 'Left' values to 'mzero' rather than
-  failing.
--}
-fromRightM :: (Monad m, Show err) => Either err a -> m a
-fromRightM (Right res) = return res
-fromRightM (Left err) = fail $ show err
-
-{-|
-  A version of 'fromJust' that maps 'Nothing' values to 'mzero' rather than
-  failing.
--}
-fromJustM :: Monad m => Maybe a -> m a
-fromJustM (Just res) = return res
-fromJustM _ = fail "fromJust"
-
-{-|
-  The 'LiftOption' class provides an infix operator to more cleanly apply the
-  'fromJustM' and 'fromRightM' methods to a value that will be passed to a
-  monadic computation.
--}
-class Monad m => LiftOption l m where
-    {-| 
-      Used to lift an option value, i.e. 'Maybe' or 'Either', so that it can be
-      passed as an argument to a monadic computation.
-    -}
-    liftO :: l a -> m a
-
-instance Monad m => LiftOption Maybe m where
-    liftO = fromJustM
-
-instance (Show a, Monad m) => LiftOption (Either a) m where
-    liftO = fromRightM
-
-
-infixr 1 #<<
--- | A version of '=<<' composed with 'liftO' for the right argument.
-(#<<) :: LiftOption l m => (a -> m b) -> l a -> m b
-l #<< r = l =<< liftO r
-
-infixr 1 <#< 
--- | A version of '<=<' composed with 'liftO' for the right argument.
-(<#<) :: LiftOption l m => (b -> m c) -> (a -> l b) -> a -> m c
-(<#<) l r x = l =<< liftO (r x)
-
-infixl 4 <#> 
--- | A version of 'liftM1' composed with 'liftO' for the right argument.
-(<#>) :: LiftOption l m => (a -> b -> m c) -> l a -> b -> m c
-l <#> r = liftM1 l $ liftO r
-
-infix 0 <#?>
--- | A version of '<?>' composed with 'liftO' for the job argument.
-(<#?>) :: (LiftOption l m, Note m) => l a -> String -> m a
-job <#?> err = liftO job <?> err
-
-
-infix 0 <?>
-{-| 
-  The 'Note' class provides an ad hoc way of tagging an error case with a
-  string.
--}
-class (Alternative m, Monad m) => Note m where
-  {-| 
-    Used to annotate more precise error messages.  Replaces the '<|>' operator 
-    in cases such as  
-    
-    > ... <|> fail "..."
-  -}
-  (<?>) :: m a -> String -> m a
-
-  {-|
-    Replaces the common pattern 
-
-    > m >>= \ cond -> if cond then fail "..."
-    
-    The default case is defined in terms of 'empty' and '<?>'.
-  -}
-  failWhen :: m Bool -> String -> m ()
-  failWhen m str =
-      do cond <- m
-         when cond empty <?> str
-
-instance Note (Either String) where
-  job <?> str = job <|> Left str
 
 -- repetition of a functions
 {-| 
@@ -629,7 +545,7 @@ funpowM n f x
   Repeatedly applies a monadic computation to an argument until there is a 
   failure.  The '<|>' operator is used for branching.
 -}
-repeatM :: (Alternative m, Monad m) => (a -> m a) -> a -> m a
+repeatM :: MonadCatch m => (a -> m a) -> a -> m a
 repeatM f x = (repeatM f =<< f x) <|> return x
 
 
@@ -648,13 +564,13 @@ map2 _ _ _ = Nothing
   The monadic version of 'map2'.  Fails with 'mzero' if the two lists are of
   different lengths.
 -}
-map2M :: (Monad m, MonadPlus m) => (a -> b -> m c) -> [a] -> [b] -> m [c]
+map2M :: MonadThrow m => (a -> b -> m c) -> [a] -> [b] -> m [c]
 map2M _ [] [] = return []
 map2M f (x:xs) (y:ys) =
   do h <- f x y
      t <- map2M f xs ys
      return (h : t)
-map2M _ _ _ = mzero
+map2M _ _ _ = throwM $! HOLErrorMsg "map2M"
 
 {-|
   Map a monadic function over a list, ignoring the results.  A re-export of 
@@ -719,14 +635,13 @@ endItlist = tryFoldr1
   The monadic version of 'foldr1'.  Fails with 'mzero' if an empty list is
   provided as an argument.
 -}
-foldr1M :: (Monad m, MonadPlus m) => (a -> a -> m a) -> [a] -> m a
-foldr1M _ [] = mzero
+foldr1M :: MonadThrow m => (a -> a -> m a) -> [a] -> m a
+foldr1M _ [] = throwM $! HOLErrorMsg "foldr1M"
 foldr1M _ [x] = return x
 foldr1M f (h:t) = f h =<< foldr1M f t
 
 {-| 
-  A safe version of a right, list fold for functions of arity 2.  Fails with
-  'Nothing' if the two lists are of different lengths.
+  A guarded version of a right, list fold for functions of arity 2.
 -}
 foldr2 :: (a -> b -> c -> c) -> c -> [a] -> [b] -> Maybe c
 foldr2 _ b [] [] = Just b
@@ -747,11 +662,10 @@ itlist2 f xs ys b = foldr2 f b xs ys
   The monadic version of 'foldr2'.  Fails with 'mzero' if the two lists are
   of different lengths.
 -}
-foldr2M :: (Monad m, MonadPlus m) => 
-           (a -> b -> c -> m c) -> c -> [a] -> [b] -> m c
+foldr2M :: MonadThrow m => (a -> b -> c -> m c) -> c -> [a] -> [b] -> m c
 foldr2M _ b [] [] = return b
 foldr2M f b (h1:t1) (h2:t2) = f h1 h2 =<< foldr2M f b t1 t2
-foldr2M _ _ _ _ = mzero
+foldr2M _ _ _ _ = throwM $! HOLErrorMsg "foldr2M"
 
 {-|
   A safe version of a left, list fold for functions of arity 2.  Fails with
@@ -775,13 +689,12 @@ revItlist2 f xs ys b = foldl2 (\ z x y -> f x y z) b xs ys
   The monadic version of 'foldl2'.  Fails with 'mzero' if the two lists are
   of different lengths.
 -}
-foldl2M :: (Monad m, MonadPlus m) => 
-           (c -> a -> b -> m c) -> c -> [a] -> [b] -> m c
+foldl2M :: MonadCatch m => (c -> a -> b -> m c) -> c -> [a] -> [b] -> m c
 foldl2M _ b [] [] = return b
 foldl2M f b (h1:t1) (h2:t2) =
     do b' <- f b h1 h2
        foldl2M f b' t1 t2
-foldl2M _ _ _ _ = mzero
+foldl2M _ _ _ _ = throwM $! HOLErrorMsg "foldl2M"
 
 -- sorting and merging of lists
 
@@ -846,7 +759,7 @@ splitList f x =
       Nothing -> ([], x)
 
 -- | The monadic version of 'splitList'.
-splitListM :: (Alternative m, Monad m) => (b -> m (a, b)) -> b -> m ([a], b)
+splitListM :: MonadCatch m => (b -> m (a, b)) -> b -> m ([a], b)
 splitListM f x = 
     (do (l, r) <- f x
         (ls, res) <- splitListM f r
@@ -869,8 +782,8 @@ revSplitList f = recSplit []
               Nothing -> (y, ls)
 
 -- | The monadic version of 'revSplitList'.
-revSplitListM :: forall m a b. (Alternative m, Monad m) => 
-                               (a -> m (a, b)) -> a -> m (a, [b])
+revSplitListM :: forall m a b. MonadCatch m => (a -> m (a, b)) 
+              -> a -> m (a, [b])
 revSplitListM f = rsplist []
   where rsplist :: [b] -> a -> m (a, [b])
         rsplist ls y = 
@@ -918,8 +831,7 @@ stripList dest x = strip x []
               Nothing -> x' : acc
 
 -- | The monadic version of 'stripList'.
-stripListM :: forall m a. (Alternative m, Monad m) => 
-                          (a -> m (a, a)) -> a -> m [a]
+stripListM :: forall m a. MonadCatch m => (a -> m (a, a)) -> a -> m [a]
 stripListM dest x = strip x []
   where strip :: a -> [a] -> m [a]
         strip x' acc =
@@ -951,15 +863,15 @@ exists = any
 partition :: (a -> Bool) -> [a] -> ([a], [a])
 partition = L.partition
 
--- | An alias to 'mapMaybe' for HOL users more familiar with this name.
+-- | Filter's a list of items using a `Maybe` predicate.
 mapFilter :: (a -> Maybe b) -> [a] -> [b]
-mapFilter = mapMaybe
+mapFilter = Maybe.mapMaybe
 
 {-| 
   The monadic version of 'mapFilter'.  The '(<|>)' operator is used for 
   branching.
 -}
-mapFilterM :: (Alternative m, Monad m) => (a -> m b) -> [a] -> m [b]
+mapFilterM :: MonadCatch m => (a -> m b) -> [a] -> m [b]
 mapFilterM _ [] = return []
 mapFilterM f (x:xs) =
     do xs' <- mapFilterM f xs
@@ -975,8 +887,8 @@ find = L.find
   The monadic version of 'find'.  Fails if the monadic predicate does.  Also 
   fails with 'mzero' if an empty list is provided.
 -}
-findM :: (Monad m, MonadPlus m) => (a -> m Bool) -> [a] -> m a
-findM _ [] = mzero
+findM :: MonadCatch m => (a -> m Bool) -> [a] -> m a
+findM _ [] = throwM $! HOLErrorMsg "findM"
 findM f (x:xs) =
     do b <- f x
        if b
@@ -987,15 +899,11 @@ findM f (x:xs) =
   An alternative monadic version of 'find' where the predicate is a monadic
   computation not necessarily of a boolean return type.  Returns the result of
   the first successful application of the predicate to an element of the list.
-  Fails with 'mzero' if called on an empty list.  
-
-  Note that 'mplus' is used for branching instead of '<|>' to minimize the 
-  constraint type; for the vast majority of monads these two functions should be
-  identical anyway.
+  Fails when called on an empty list. 
 -}
-tryFind :: (Monad m, MonadPlus m) => (a -> m b) -> [a] -> m b
-tryFind _ [] = mzero
-tryFind f (x:xs) = f x `mplus` tryFind f xs
+tryFind :: (MonadCatch m, MonadThrow m) => (a -> m b) -> [a] -> m b
+tryFind _ [] = throwM $! HOLErrorMsg "tryFind"
+tryFind f (x:xs) = f x <|> tryFind f xs
 
 -- | An alias to 'concat' for HOL users who are more familiar with this name.
 flat :: [[a]] -> [a]
@@ -1276,16 +1184,16 @@ funcMap f (Branch p b l r) = Branch p b (funcMap f l) $ funcMap f r
 funcFoldl :: (c -> a -> b -> c) -> c -> Func a b -> c
 funcFoldl _ a Empty = a
 funcFoldl f a (Leaf _ l) =
-    let (xs, ys) = unzip l in
-      fromJust $ foldl2 f a xs ys
+    let (xs, ys) = unzip l
+        Just res = foldl2 f a xs ys in res
 funcFoldl f a (Branch _ _ l r) = funcFoldl f (funcFoldl f a l) r
 
 -- | A version of 'foldr' for 'Func' trees.
 funcFoldr :: (a -> b -> c -> c) -> c -> Func a b -> c
 funcFoldr _ a Empty = a
 funcFoldr f a (Leaf _ l) =
-    let (xs, ys) = unzip l in
-      fromJust $ foldr2 f a xs ys
+    let (xs, ys) = unzip l
+        Just res = foldr2 f a xs ys in res
 funcFoldr f a (Branch _ _ l r) = funcFoldr f (funcFoldr f a r) l
 
 -- | Converts a 'Func' tree to a sorted association list.
@@ -1301,8 +1209,8 @@ ran :: Ord b => Func a b -> [b]
 ran f = setify $ funcFoldl (\ a _ y -> y:a) [] f
 
 -- | Application for 'Func' trees.
-applyd :: forall a b. (Hashable a, Ord a) => Func a b -> (a -> Maybe b) -> a 
-       -> Maybe b
+applyd :: forall m a b. (Monad m, Hashable a, Ord a) 
+       => Func a b -> (a -> m b) -> a -> m b
 applyd Empty d x = d x
 applyd (Branch p b l r) d x
     | (k `xor` p) .&. (b - 1) == 0 =
@@ -1312,24 +1220,30 @@ applyd (Branch p b l r) d x
 applyd (Leaf h l) d x
     | h == hash x = applydRec l
     | otherwise = d x
-  where applydRec :: Ord a => [(a, b)] -> Maybe b
+  where applydRec :: (Monad m, Ord a) => [(a, b)] -> m b
         applydRec [] = d x
         applydRec ((a, b):t)
-            | x == a = Just b
+            | x == a = return b
             | x > a = applydRec t
             | otherwise = d x
 
--- | Application for 'Func' trees with using constant 'Nothing'.
-apply :: (Hashable a, Ord a) => Func a b -> a -> Maybe b
-apply f = applyd f $ const Nothing
+-- | Guarded application for 'Func' trees.
+apply :: (MonadThrow m, Hashable a, Ord a) => Func a b -> a -> m b
+apply f = applyd f (\_ -> throwM $! HOLErrorMsg "apply")
 
 -- | Application for 'Func' trees with a default value.
 tryApplyd :: (Hashable a, Ord a) => Func a b -> a -> b -> b
-tryApplyd f a d = fromJust $ applyd f (\ _ -> Just d) a
+tryApplyd f a d = 
+    case runCatch $ applyd f (\ _ -> return d) a of
+      Right res -> res
+      _         -> d
 
 -- | Predicate for testing if a value is defined in a 'Func' tree.
 defined ::(Hashable a, Ord a) => Func a b -> a -> Bool
-defined f x = isJust $ apply f x
+defined f x = 
+    case runCatch $ apply f x of
+      Right{} -> True
+      _       -> False
 
 -- | Undefine a value in a 'Func' tree.
 undefine :: forall a b. (Hashable a, Ord a, Eq b) => a -> Func a b -> Func a b
@@ -1394,8 +1308,8 @@ newBranch p1 t1 p2 t2 =
             | otherwise = ab:defineRec xs
 
 -- | Combines two 'Func' trees.
-combine :: forall a b. Ord a => (b -> b -> b) -> (b -> Bool) -> Func a b 
-        -> Func a b -> Func a b 
+combine :: forall a b. Ord a => (b -> b -> b) -> (b -> Bool) 
+        -> Func a b -> Func a b -> Func a b 
 combine _ _ Empty t2 = t2
 combine _ _ t1 Empty = t1
 combine op z lf@(Leaf k _) br@(Branch p b l r)

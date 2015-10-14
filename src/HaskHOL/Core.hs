@@ -72,16 +72,16 @@ newConstant s = S.newConstant s <=< toHTy
   A redefinition of 'S.newAxiom' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newAxiom :: HOLTermRep tm Theory thry => Text -> tm -> HOL Theory thry HOLThm
-newAxiom s = S.newAxiom s <=< toHTm
+newAxiom :: HOLTermRep tm Theory thry => (Text, tm) -> HOL Theory thry HOLThm
+newAxiom (s, t) = S.newAxiom s =<< toHTm t
 
 {-| 
   A redefinition of 'S.newBasicDefinition' to overload it for all valid term
   representations as defined by 'HOLTermRep'.
 -}
-newBasicDefinition :: HOLTermRep tm Theory thry => Text -> tm 
-                   -> HOL Theory thry HOLThm
-newBasicDefinition lbl = S.newBasicDefinition lbl <=< toHTm
+newBasicDefinition :: HOLTermRep tm Theory thry 
+                   => (Text, tm) -> HOL Theory thry HOLThm
+newBasicDefinition (lbl, t) = S.newBasicDefinition lbl =<< toHTm t
 
 
 -- from parser
@@ -130,16 +130,3 @@ prioritizeOverload = P.prioritizeOverload <=< toHTy
 -}
 newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
 newTypeAbbrev s = P.newTypeAbbrev s <=< toHTy
-
-{-
-instance Show HOLType where
-    show x = unsafePerformIO (runHOLTheory (showHOL x) Nothing "test")
-
---test :: IO ()
-test = runHOLTheory
-      (do --newType "Either" 2 
-          ty1 <- toHTy "% 'A 'B. 'A _M -> ('A -> 'B _M) -> 'B _M"
-          ty2 <- toHTy "% 'a 'b . ('A , 'a) Either -> ('a -> ('A , 'b) Either) -> ('A , 'b) Either"
-          let (Just mat) = typeMatch ty1 ty2 ([],[],[])
-          return $! typeSubstFull mat ty1) Nothing "test"
--}

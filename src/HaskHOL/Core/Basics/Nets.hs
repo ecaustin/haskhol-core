@@ -31,7 +31,7 @@ import HaskHOL.Core.State.Monad
 
 -- ordered, unique insertion for sets as lists
 setInsert :: Ord a => a -> [a] -> [a]
-setInsert a xs = fromMaybe xs $ sinsert a xs
+setInsert a xs = maybe xs id $ sinsert a xs
   where sinsert :: Ord a => a -> [a] -> Maybe [a]
         sinsert x [] = Just [x]
         sinsert x l@(h:t)
@@ -121,7 +121,7 @@ labelToStore lconsts tm =
         (Abs bv bod) -> 
             let bod' = if bv `elem` lconsts
                        then let v = unsafeGenVar $ typeOf bv in
-                              fromJust $ varSubst [(bv, v)] bod
+                              try' $! varSubst [(bv, v)] bod
                        else bod in
               (LNet (length args), bod':args)
         (TyAbs _ t) -> (LTyAbs, [t])
@@ -140,7 +140,7 @@ netUpdate _ (b, [], NetNode edges tips) =
     NetNode edges $ setInsert b tips
 netUpdate lconsts (b, tm:rtms, NetNode edges tips) =
     let (label, ntms) = labelToStore lconsts tm
-        (child, others) = fromMaybe (netEmpty, edges) $ mapRemove label edges
+        (child, others) = maybe (netEmpty, edges) id $ mapRemove label edges
         newChild = netUpdate lconsts (b, ntms++rtms, child) in
       NetNode (mapInsert label newChild others) tips
 

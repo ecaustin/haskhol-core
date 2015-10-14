@@ -162,18 +162,18 @@ mkVarType = TyVarIn False
   Destructs a type variable, returning its name.  Fails with 'Nothing' if called
   on a non-variable type.
 -}
-destVarType :: HOLType -> Maybe Text
-destVarType (TyVarIn _ s) = Just s
-destVarType _ = Nothing
+destVarType :: MonadThrow m => HOLType -> m Text
+destVarType (TyVarIn _ s) = return s
+destVarType ty = throwM $! HOLTypeError ty "destVarType"
 
 {-| 
   Destructs a type application, returning its operator name and its list of type
   arguments.  Fails with 'Nothing' if called on a type that is not an 
   application.
 -}
-destType :: HOLType -> Maybe (TypeOp, [HOLType])
-destType (TyAppIn op args) = Just (op, args)
-destType _ = Nothing
+destType :: MonadThrow m => HOLType -> m (TypeOp, [HOLType])
+destType (TyAppIn op args) = return (op, args)
+destType ty = throwM $! HOLTypeError ty "destType"
 
 {-| 
   Returns the list of all free, type variables in a type, not including type
@@ -271,25 +271,27 @@ typeSubstFull (tyenv, tyOps, opOps) =
 typeTypeSubst :: HOLTypeEnv -> HOLType -> HOLType
 typeTypeSubst [] t = t
 typeTypeSubst tyenv t =
-    fromRight $ typeSubstRec (filter validSubst tyenv) t
-  where typeSubstRec :: HOLTypeEnv -> HOLType -> Either String HOLType
+    case runCatch $ typeSubstRec (filter validSubst tyenv) t of
+      Right res -> res
+      _         -> t
+  where typeSubstRec :: HOLTypeEnv -> HOLType -> Catch HOLType
         typeSubstRec tyins (TyAppIn op args) =
             tyApp op =<< mapM (typeSubstRec tyins) args
         typeSubstRec tyins ty@(UTypeIn tv tbody) =
             let tyins' = filter (\ (x, _) -> x /= tv) tyins in
-              if null tyins' then Right ty
+              if null tyins' then return ty
               -- test for name capture, renaming instances of tv if necessary
               else if any (\ (x, t') -> tv `elem` tyVars t' && 
                                         x `elem` tyVars tbody) tyins'
                    then let tvbs = tyVars tbody
                             tvpatts = map fst tyins'
-                            tvrepls = catTyVars . mapMaybe (`lookup` tyins') $
+                            tvrepls = catTyVars . mapFilter (`lookup` tyins') $
                                         intersect tvbs tvpatts
                             tv' = variantTyVar ((tvbs \\ tvpatts) `union` 
                                                   tvrepls) tv in
                           mkUType tv' =<< typeSubstRec ((tv, tv'):tyins') tbody
                    else mkUType tv =<< typeSubstRec tyins' tbody
-        typeSubstRec tyins ty@TyVarIn{} = Right $ assocd ty tyins ty
+        typeSubstRec tyins ty@TyVarIn{} = return $! assocd ty tyins ty
                                 
 -- | Alias to the primitive boolean type.
 {-# INLINEABLE tyBool #-}
@@ -308,7 +310,7 @@ pattern ty1 :-> ty2 <- TyFun ty1 ty2
 -- Used for error cases in type checking only.  Not exported.
 {-# INLINEABLE tyBottom #-}
 tyBottom :: HOLType
-tyBottom = fromRight $ tyApp tyOpBottom []
+tyBottom = try' $! tyApp tyOpBottom []
 
 -- | Alias to the unconstrained type variable @A@.
 {-# INLINEABLE tyA #-}
@@ -331,10 +333,10 @@ pattern TyB <- TyVar False "B"
   function type.  Fails with 'Nothing' if the type to be destructed isn't a
   primitive function type.
 -}
-destFunTy :: HOLType -> Maybe (HOLType, HOLType)
+destFunTy :: MonadThrow m => HOLType -> m (HOLType, HOLType)
 destFunTy (TyAppIn (TyPrimitiveIn "fun" _) [ty1, ty2]) = 
-    Just (ty1, ty2)
-destFunTy _ = Nothing
+    return (ty1, ty2)
+destFunTy ty = throwM $! HOLTypeError ty "destFunTy"
 
 {-|
   Returns the type of term.  Fails with a special type, @tyBottom@, if the type
@@ -352,10 +354,10 @@ typeOf (CombIn x _) =
       Just (_, _ : ty : _) -> ty
       _ -> tyBottom
 typeOf (AbsIn (VarIn _ ty) t) =
-    fromRight $ tyApp tyOpFun [ty, typeOf t]
+    try' $! tyApp tyOpFun [ty, typeOf t]
 typeOf AbsIn{} = tyBottom
 typeOf (TyAbsIn tv tb) = 
-    fromRight . mkUType tv $ typeOf tb
+    try' $! mkUType tv $ typeOf tb
 typeOf (TyCombIn t ty) =
     case typeOf t of
       (UTypeIn tv tbody) -> 
@@ -429,15 +431,15 @@ pattern TyOpFun <- TyPrimitive "fun" 2
 
   * A type operator's arity disagrees with the length of the argument list.
 -}
-tyApp :: TypeOp -> [HOLType] -> Either String HOLType
+tyApp :: MonadThrow m => TypeOp -> [HOLType] -> m HOLType
 tyApp tyOp@TyOpVarIn{} [] = 
-    Left $ "tyApp: " ++ show tyOp ++ ": TyOpVar applied to zero args."
-tyApp tyOp@TyOpVarIn{} args = Right $ TyAppIn tyOp args
+    throwM $ HOLTypeOpError tyOp "tyApp: TyOpVar applied to zero args."
+tyApp tyOp@TyOpVarIn{} args = return $! TyAppIn tyOp args
 tyApp tyOp args =
     let (_, arity) = destTypeOp tyOp in
       if arity == length args 
-      then Right $ TyAppIn tyOp args
-      else Left $ "tyApp: " ++ show tyOp ++ ": wrong number of arguments."
+      then return $! TyAppIn tyOp args
+      else throwM $ HOLTypeOpError tyOp "tyApp: wrong number of arguments."
 
 -- | Returns the list of all type operator variables in a type.
 typeOpVars :: HOLType -> [TypeOp]
@@ -458,36 +460,42 @@ catTypeOpVars = foldr (union . typeOpVars) []
 typeOpSubst :: [(TypeOp, TypeOp)] -> HOLType -> HOLType
 typeOpSubst [] t = t
 typeOpSubst tyopenv t =
-    fromRight $ tyOpSubstRec (filter validSubst tyopenv) t
-  where tyOpSubstRec :: [(TypeOp, TypeOp)] -> HOLType -> Either String HOLType
+    case runCatch $ tyOpSubstRec (filter validSubst tyopenv) t of
+      Right res -> res
+      _         -> t
+  where tyOpSubstRec :: [(TypeOp, TypeOp)] -> HOLType -> Catch HOLType
         tyOpSubstRec tyopins (TyAppIn op args) =
             do args' <- mapM (tyOpSubstRec tyopins) args
-               case tryFind (\ (tp, tr) ->
-                              if tp /= op || snd (destTypeOp tr) /= length args 
-                              then Nothing
-                              else Just tr) tyopins of
-                 Nothing -> tyApp op args'
-                 Just op' -> tyApp op' args'
+               case runCatch $ tryFind (\ (tp, tr) ->
+                      if tp /= op || snd (destTypeOp tr) /= length args
+                      then mzero
+                      else return tr) tyopins of
+                 Left{}    -> tyApp op args'
+                 Right op' -> tyApp op' args'
         tyOpSubstRec tyopins (UTypeIn tv tbody) =
             mkUType tv =<< tyOpSubstRec tyopins tbody
-        tyOpSubstRec _ ty@TyVarIn{} = Right ty
+        tyOpSubstRec _ ty@TyVarIn{} = return ty
 
 -- instantiation of type operator variables with universal types.
 typeOpInst :: [(TypeOp, HOLType)] -> HOLType -> HOLType
 typeOpInst [] t = t
-typeOpInst tyopenv t = fromRight $ tyOpInstRec (filter validSubst tyopenv) t
-  where arityOf :: HOLType -> Maybe Int
-        arityOf ty = return (length . fst) <*> destUTypes ty      
+typeOpInst tyopenv t = 
+    case runCatch $ tyOpInstRec (filter validSubst tyopenv) t of
+      Right res -> res
+      _         -> t
+  where arityOf :: (MonadCatch m, MonadThrow m) => HOLType -> m Int
+        arityOf ty = liftM (length . fst) $ destUTypes ty      
 
-        tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> Either String HOLType
+        tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> Catch HOLType
         tyOpInstRec tyopins ty@(TyAppIn op args) =
             do args' <- mapM (tyOpInstRec tyopins) args
-               case tryFind (\ (tp, tr) ->
-                              if tp /= op || arityOf tr /= (Just $ length args) 
-                              then Nothing
-                              else destUTypes tr) tyopins of
-                 Nothing -> tyApp op args'
-                 Just (rtvs, rtbody)
+               case runCatch $ tryFind (\ (tp, tr) ->
+                      do n <- arityOf tr
+                         if tp /= op || n /= length args
+                            then mzero
+                            else destUTypes ty) tyopins of
+                 Left{} -> tyApp op args'
+                 Right (rtvs, rtbody)
                      | isSmall rtbody ->
                          return $ typeSubst (zip rtvs args') rtbody
                      | otherwise -> return ty
@@ -497,13 +505,13 @@ typeOpInst tyopenv t = fromRight $ tyOpInstRec (filter validSubst tyopenv) t
             -- test for name capture, renaming instances of tv if necessary 
             then let tvbs = typeOpVars tbody
                      tvpatts = map fst tyopins
-                     tvrepls = catTyVars . mapMaybe (`lookup` tyopins) $
+                     tvrepls = catTyVars . mapFilter (`lookup` tyopins) $
                                  intersect tvbs tvpatts
                      tv' = variantTyVar tvrepls tv
                      tbody' = typeSubst [(tv, tv')] tbody in
                    mkUType tv' =<< tyOpInstRec tyopins tbody'
             else mkUType tv =<< tyOpInstRec tyopins tbody
-        tyOpInstRec _ ty@TyVarIn{} = Right ty                  
+        tyOpInstRec _ ty@TyVarIn{} = return ty                  
                 
 {- 
    HOL2P Type Primitives
@@ -528,15 +536,15 @@ isSmall UTypeIn{} = False
   Constructs a universal type of a given bound type and body type.  Fails with
   'Left' if the bound type is not a small, type variable.
 -}
-mkUType :: HOLType -> HOLType -> Either String HOLType
+mkUType :: MonadThrow m => HOLType -> HOLType -> m HOLType
 mkUType tv@(TyVarIn True _) tybody = 
-    Right $ UTypeIn tv tybody
-mkUType _ _ = Left "mkUType"
+    return $! UTypeIn tv tybody
+mkUType tv _ = throwM $! HOLTypeError tv "mkUType"
 
 {-|
   Constructs a compound universal type given a list of bound types and a body.    Fails with 'Left' if any internal call to 'mkUType' fails.
 -}
-mkUTypes :: [HOLType] -> HOLType -> Either String HOLType
+mkUTypes :: (MonadCatch m, MonadThrow m) => [HOLType] -> HOLType -> m HOLType
 mkUTypes vs b = foldrM mkUType b vs <?> "mkUTypes"
 
 {-|
@@ -552,52 +560,52 @@ mkUTypes vs b = foldrM mkUType b vs <?> "mkUTypes"
 
   * The type operator argument is not a variable. 
 -}
-uTypeFromTypeOpVar :: TypeOp -> Int -> Either String HOLType
+uTypeFromTypeOpVar :: (MonadCatch m, MonadThrow m) => TypeOp -> Int -> m HOLType
 uTypeFromTypeOpVar s@TyOpVarIn{} n
     | n > 0 = 
         let tvs = map (\ x -> TyVarIn True . pack $ 'A' : show x) 
                     [1 .. n] in
           do ty <- tyApp s tvs
              mkUTypes tvs ty
-    | otherwise = 
-        Left "uTypeFromTypeOpVar: must have a positive number of bound types."
-uTypeFromTypeOpVar _ _ = 
-    Left "uTypeFromTypeOpVar: type operator not a variable."
+    | otherwise = throwM $! HOLMiscError n
+          "uTypeFromTypeOpVar: must have a positive number of bound types."
+uTypeFromTypeOpVar s _ = throwM $! HOLTypeOpError s 
+    "uTypeFromTypeOpVar: type operator not a variable."
 
 {-|
   Constructs a small type from a given type by constraining all of the type
   variables in the type to be small.  Fails with 'Left' if the type contains
   any universal types.
 -}
-mkSmall :: HOLType -> Either String HOLType
+mkSmall :: MonadThrow m => HOLType -> m HOLType
 mkSmall (TyVarIn _ s) = 
-    Right $ TyVarIn True s
+    return $! TyVarIn True s
 mkSmall (TyAppIn op tvs) = 
-    liftM (TyAppIn op) $ mapM mkSmall tvs
-mkSmall UTypeIn{} = Left "mkSmall"
+    liftM (TyAppIn op) $! mapM mkSmall tvs
+mkSmall ty@UTypeIn{} = throwM $! HOLTypeError ty "mkSmall"
 
 {-| 
   Destructs a universal type, returning its bound type and body type.  Fails
   with 'Nothing' if the provided type is not universally quantified.
 -}
-destUType :: HOLType -> Maybe (HOLType, HOLType)
-destUType (UTypeIn tv ty) = Just (tv, ty)
-destUType _ = Nothing
+destUType :: MonadThrow m => HOLType -> m (HOLType, HOLType)
+destUType (UTypeIn tv ty) = return (tv, ty)
+destUType ty = throwM $! HOLTypeError ty "destUType"
 
 {-|
   Destructs a compound universal type, returning the list of bound variables
   and the final body type.  Fails if the provided type is not universally
   quantified.
 -} 
-destUTypes :: HOLType -> Maybe ([HOLType], HOLType)
+destUTypes :: MonadThrow m => HOLType -> m ([HOLType], HOLType)
 destUTypes (UTypeIn tv tb) = 
     let (tvs, tb') = destUTypesRec ([tv], tb) in
-      Just (tvs, tb')
+      return (tvs, tb')
   where destUTypesRec :: ([HOLType], HOLType) -> ([HOLType], HOLType)
         destUTypesRec (acc, UTypeIn tv' tb') = 
             destUTypesRec (acc++[tv'], tb')
         destUTypesRec res = res
-destUTypes _ = Nothing
+destUTypes tm = throwM $! HOLTypeError tm "destUTypes"
 
 -- | Predicate to test if a type contains a universal type at any level.
 containsUType :: HOLType -> Bool

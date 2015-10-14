@@ -38,16 +38,9 @@ module HaskHOL.Core.State.Monad
     , ctxtBase
     , extendTheory
       -- * Text Output Methods
+    , putDocHOL
     , putStrHOL
     , putStrLnHOL
-      -- * Exception Handling Methods
-    , HOLException(..)
-    , throwHOL
-    , catchHOL
-    , noteHOL
-    , liftMaybe
-    , liftEither
-    , finallyHOL
       -- * Local Reference Methods
     , HOLRef
     , newHOLRef
@@ -75,6 +68,7 @@ module HaskHOL.Core.State.Monad
     , unsafeGenVar
       -- * Proof Caching
     , cacheProof
+    , unsafeCacheProof
     , cacheProofs
       -- * Re-export for Extensible Exceptions
     , Exception
@@ -86,7 +80,6 @@ import HaskHOL.Core.Kernel.Prims
 
 -- HOL Monad imports
 import Data.Typeable
-import Control.Exception (Exception)
 import qualified Control.Exception as E
 import Data.IORef
 import GHC.Prim (Constraint)
@@ -94,6 +87,7 @@ import qualified Data.HashMap.Strict as Hash
 import Data.Hashable
 import Data.Acid hiding (makeAcidic, Query, Update)
 import qualified Data.Text.Lazy as T
+import Text.PrettyPrint.Free
 import System.IO.Unsafe (unsafePerformIO)
 
 -- TH imports
@@ -356,23 +350,24 @@ instance Monad (HOL cls thry) where
     m >>= k = HOL $ \ ref st mods -> 
         do b <- runHOLUnsafe m ref st mods
            runHOLUnsafe (k b) ref st mods
-    fail = throwHOL . HOLException
-
-instance MonadPlus (HOL cls thry) where
-    mzero = fail "mzero - HOL"
-    mplus = (<||>)
+    fail = throwM . HOLErrorMsg
 
 instance Applicative (HOL cls thry) where
     pure = return
     (<*>) = ap
 
-instance Alternative (HOL cls thry) where
-    empty = fail "empty - HOL"
-    (<|>) = (<||>)
-
-instance Note (HOL cls thry) where
-   job <?> str = job <|> throwHOL (HOLException str)
-
+instance MonadThrow (HOL cls thry) where
+    throwM x = HOL $ \ _ _ _ -> E.throwIO x
+instance MonadCatch (HOL cls thry) where
+    catch job err = HOL $ \ ref st mods ->
+        runHOLUnsafe job ref st mods `E.catch`
+        \ e -> runHOLUnsafe (err e) ref st mods
+instance MonadMask (HOL cls thry) where
+    mask m = HOL $ \ ref st mods -> E.mask $ \ restore ->
+        runHOLUnsafe (m $ lft restore) ref st mods
+      where lft :: (IO a -> IO a) -> HOL cls thry a -> HOL cls thry a
+            lft rst (HOL x) = HOL $ \ ref st mods -> rst $ x ref st mods
+    uninterruptibleMask = undefined
 
 -- Theory Contexts
 data InnerThry
@@ -397,9 +392,10 @@ instance Show (TheoryPath thry) where
 
 -- Used to construct the imports modules necessary for run-time interpretation
 buildModList :: TheoryPath thry -> [String] -> [String]
-buildModList x acc
-    | isNothing (oldTP x) = acc
-    | otherwise = buildModList (fromJust $ oldTP x) (modTP x : acc)
+buildModList x acc =
+    case oldTP x of
+      Nothing -> acc
+      Just tp -> buildModList tp (modTP x : acc)
 
 -- converts TheoryPath strings to FilePaths for shelly
 mkFilePath :: String -> FilePath
@@ -485,6 +481,11 @@ extendTheory old modname m =
 
 
 -- define own versions of IO functions so they can be used external to kernel
+{-| 
+  A version of 'putDoc' lifted to the 'HOL' monad for use with pretty printers.
+-}
+putDocHOL :: Doc a -> HOL cls thry ()
+putDocHOL x = HOL $ \ _ _ _ -> putDoc x
 
 -- | A version of 'putStr' lifted to the 'HOL' monad.
 putStrHOL :: String -> HOL cls thry ()
@@ -493,87 +494,6 @@ putStrHOL x = HOL $ \ _ _ _ -> putStr x
 -- | A version of 'putStrLn' lifted to the 'HOL' monad.
 putStrLnHOL :: String -> HOL cls thry ()
 putStrLnHOL x = HOL $ \ _ _ _ -> putStrLn x
-
--- Errors
--- the basic HOL exception type
--- | The data type for generic errors in HaskHOL.  Carries a 'String' message.
-newtype HOLException = HOLException String deriving Typeable
-instance Show HOLException where show (HOLException str) = str
-instance Exception HOLException
-
-{-| 
-  A version of 'throwIO' lifted to the 'HOL' monad.  
-
-  Note that the following functions for the 'HOL' type rely on 'throwHOL':
- 
-  * 'fail' - Equivalent to 
-
-    > throwHOL . HOLException
-
-  * 'mzero' - Equivalent to 
-
-    > fail "mzero - HOL"
-
-  * 'empty' - Equivalent to 
-
-    > fail "empty - HOL"
--}
-throwHOL :: Exception e => e -> HOL cls thry a
-throwHOL x = HOL $ \ _ _ _ -> E.throwIO x
-
-{-| 
-  A version of 'E.catch' lifted to the 'HOL' monad.
-
-  Note that 'mplus' and '<|>' are defined in terms of catching a 
-  'E.SomeException' with 'catchHOL' and then ignoring it to run an alternative
-  computation instead.
--}
-catchHOL :: Exception e => HOL cls thry a -> (e -> HOL cls thry a) -> 
-                           HOL cls thry a
-catchHOL job errcase = HOL $ \ ref st mods -> 
-    runHOLUnsafe job ref st mods `E.catch` 
-    \ e -> runHOLUnsafe (errcase e) ref st mods
-
--- Used to define mplus and (<|>) for the HOL monad.  Not exposed to the user.
-(<||>) :: HOL cls thry a -> HOL cls thry a -> HOL cls thry a
-job <||> alt = HOL $ \ ref st mods -> 
-   runHOLUnsafe job ref st mods `E.catch` 
-     \ (_ :: E.SomeException) -> runHOLUnsafe alt ref st mods
-
--- | A version of 'note' specific to 'HOL' computations.
-noteHOL :: String -> HOL cls thry a -> HOL cls thry a
-noteHOL str m = HOL $ \ ref st mods ->
-    runHOLUnsafe m ref st mods `E.catch` \ (e :: E.SomeException) ->
-        case E.fromException e of
-          Just (HOLException str2) -> 
-              E.throwIO . HOLException $ str ++ ": " ++ str2
-          _ -> E.throwIO . HOLException $ str ++ ": " ++ show e
-
-{-| 
-  Lifts a 'Maybe' value into the 'HOL' monad mapping 'Just's to 'return's and
-  'Nothing's to 'fail's with the provided 'String'.
--}
-liftMaybe :: String -> Maybe a -> HOL cls thry a
-liftMaybe _ (Just x) = return x
-liftMaybe str _ = fail str 
-
-{-|
-  Lifts an 'Either' value into the 'HOL' monad mapping 'Right's to 'return's
-  and 'Left's to 'fail's.  
-
-  Note that the value inside the 'Left' must have an instance of the 'Show' 
-  class such that 'show' can be used to construct a string to be used with
-  'fail'.
--}
---EVNOTE: Switch this to use either exceptions or monadthrow and get it out of this file?
-liftEither :: (Monad m, Show err) => String -> Either err a -> m a
-liftEither _ (Right res) = return res
-liftEither str1 (Left str2) = fail $ str1 ++ ": " ++ show str2
-
--- | A version of 'E.finally' lifted to the 'HOL' monad.
-finallyHOL :: HOL cls thry a -> HOL cls thry b -> HOL cls thry a
-finallyHOL a b = HOL $ \ ref st mods ->
-    runHOLUnsafe a ref st mods `E.finally` runHOLUnsafe b ref st mods
 
 -- Local vars
 -- | A type synonym for 'IORef'.
@@ -763,7 +683,7 @@ getBenignFlag flag =
     do acid <- openLocalStateHOL (BenignFlags mapEmpty)
        val <- queryHOL acid (LookupFlag (tyToIndex flag))
        closeAcidStateHOL acid
-       return $! fromMaybe (initFlagValue flag) val
+       return $! maybe (initFlagValue flag) id val
 
 -- Fresh Name Generation
 
@@ -811,6 +731,23 @@ newFlag flag val =
        return [ty, cls]
 
 -- Proof Caching
+cacheProofInternal :: Text -> IORef (Hash.HashMap Text HOLThm) -> String 
+                   -> [String] -> HOL Proof thry HOLThm -> IO HOLThm
+cacheProofInternal lbl ref tp mods prf =
+    do hm <- readIORef ref
+       case Hash.lookup lbl hm of
+         Just th -> 
+             return th
+         Nothing ->
+           let lbl' = unpack lbl in
+             do putStrLn ("proving: " ++ lbl')
+                th <- runHOLUnsafe prf ref tp mods
+                putStrLn (lbl' ++ " proved.")
+                atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
+
+unsafeCacheProof :: Text -> HOL Proof thry HOLThm -> HOL cls thry HOLThm
+unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
+    cacheProofInternal lbl ref tp mods prf
 
 {-|
   The 'cacheProof' method stores or retrieves a theorem from the proof
@@ -845,16 +782,7 @@ cacheProof :: PolyTheory thry thry' => Text -> TheoryPath thry
            -> HOL Proof thry HOLThm 
            -> HOL cls thry' HOLThm
 cacheProof lbl tp prf = HOL $ \ ref _ mods ->
-    do hm <- readIORef ref
-       case Hash.lookup lbl hm of
-         Just th -> 
-             return th
-         Nothing ->
-           let lbl' = unpack lbl in
-             do putStrLn ("proving: " ++ lbl')
-                th <- runHOLUnsafe prf ref (newTP tp) mods
-                putStrLn (lbl' ++ " proved.")
-                atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
+    cacheProofInternal lbl ref (newTP tp) mods prf
 
 {-|
   This is a version of 'cacheProof' that handles proof computations that return
@@ -878,7 +806,7 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                  Just th -> 
                    return th
                  Nothing -> 
-                   let qths = mapMaybe (`Hash.lookup` hm) lbls in
+                   let qths = mapFilter (`Hash.lookup` hm) lbls in
                      do unless (null qths) . fail $
                            "cacheProofs: some provided labels clash with " ++
                            "existing theorems."
@@ -891,8 +819,8 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                            "number of theorems."
                         let hm' = Hash.fromList $ zip lbls ths
                         atomicModifyIORef' ref (\ x -> 
-                          let hm'' = Hash.union x hm' in
-                            (hm'', fromJust $ Hash.lookup lbl hm''))
+                          let hm'' = Hash.union x hm'
+                              Just th = Hash.lookup lbl hm'' in (hm'', th))
 
 {-# NOINLINE counter #-}
 counter :: IORef Int

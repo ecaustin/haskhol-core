@@ -60,7 +60,7 @@ module HaskHOL.Core.Parser.TermParser
     , holTermParser
     ) where
 
-import HaskHOL.Core.Lib
+import HaskHOL.Core.Lib hiding ((<|>))
 import HaskHOL.Core.Parser.Lib
 import HaskHOL.Core.Parser.Prims
 import HaskHOL.Core.Parser.TypeParser
@@ -248,7 +248,7 @@ mkLet :: [PreTerm] -> PreTerm -> Maybe PreTerm
 mkLet binds bod = case length tms of
                     0 -> Nothing
                     _ -> Just $ foldl PComb letstart tms
-    where (vars, tms) = unzip $ mapMaybe pdestEq binds
+    where (vars, tms) = unzip $ mapFilter pdestEq binds
           letend = PComb (PVar "LET_END" dpty) bod
           ab = foldr PAbs letend vars
           letstart = PComb (PVar "LET" dpty) ab
@@ -336,3 +336,7 @@ getConstType' x = gets $ views termConstants (isJust . mapLookup x)
 
 getInterface' :: Text -> MyParser Bool
 getInterface' x = gets $ views interface (isJust . lookup x)
+
+isJust :: Maybe a -> Bool
+isJust Just{} = True
+isJust Nothing = False
