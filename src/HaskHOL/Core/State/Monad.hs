@@ -187,7 +187,7 @@ insertFlag ty flag =
 lookupFlag :: String -> Query BenignFlags (Maybe Bool)
 lookupFlag ty =
     do BenignFlags m <- ask
-       return (mapLookup ty m)
+       return (mapAssoc ty m)
 makeAcidic ''BenignFlags ['insertFlag, 'lookupFlag]
 --
 --
@@ -350,7 +350,7 @@ instance Monad (HOL cls thry) where
     m >>= k = HOL $ \ ref st mods -> 
         do b <- runHOLUnsafe m ref st mods
            runHOLUnsafe (k b) ref st mods
-    fail = throwM . HOLErrorMsg
+    fail = fail'
 
 instance Applicative (HOL cls thry) where
     pure = return
@@ -806,7 +806,8 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                  Just th -> 
                    return th
                  Nothing -> 
-                   let qths = mapFilter (`Hash.lookup` hm) lbls in
+                   let qths = mapFilter (maybeToFail "cacheProofs" . 
+                                         (`Hash.lookup` hm)) lbls in
                      do unless (null qths) . fail $
                            "cacheProofs: some provided labels clash with " ++
                            "existing theorems."

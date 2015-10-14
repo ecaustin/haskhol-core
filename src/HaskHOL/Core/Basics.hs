@@ -367,7 +367,7 @@ findTerm p tm
           Comb l r -> findTerm p l <|> findTerm p r
           TyAbs _ bod -> findTerm p bod
           TyComb tm' _ -> findTerm p tm'
-          _ -> throwM $! HOLErrorMsg "findTerm"
+          _ -> fail' "findTerm"
 
 -- | The monadic version of 'findTerm'.
 findTermM :: (MonadCatch m, MonadThrow m) 
@@ -381,7 +381,7 @@ findTermM p tm =
                  Comb l r -> findTermM p l <|> findTermM p r
                  TyAbs _ bod -> findTermM p bod
                  TyComb tm' _ -> findTermM p tm'
-                 _ -> throwM $! HOLErrorMsg "findTermM"
+                 _ -> fail' "findTermM"
 
 -- | Searches a term for all unique subterms that satisfy a given predicate.
 findTerms :: (HOLTerm -> Bool) -> HOLTerm -> [HOLTerm]
@@ -440,7 +440,7 @@ findPath p tm
           Comb l r -> liftM ((:) 'r') (findPath p r) <|>
                       liftM ((:) 'l') (findPath p l)
           TyComb bod _ -> liftM ((:) 'c') $ findPath p bod
-          _ -> throwM $! HOLErrorMsg "findPath"
+          _ -> fail' "findPath"
 
 {-|
   Returns the subterm found by following a 'String' path as produced by 
@@ -454,7 +454,7 @@ followPath ('r':t) (Comb _ r) = followPath t r
 followPath ('c':t) (TyComb tm _) = followPath t tm
 followPath ('b':t) (Abs _ bod) = followPath t bod
 followPath ('t':t) (TyAbs _ bod) = followPath t bod
-followPath _ _ = throwM $! HOLErrorMsg "followPath"
+followPath _ _ = fail' "followPath"
 
 -- theorem manipulators
 -- | Returns the list of all free type variables in a theorem.

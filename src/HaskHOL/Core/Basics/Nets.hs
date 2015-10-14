@@ -31,12 +31,12 @@ import HaskHOL.Core.State.Monad
 
 -- ordered, unique insertion for sets as lists
 setInsert :: Ord a => a -> [a] -> [a]
-setInsert a xs = maybe xs id $ sinsert a xs
-  where sinsert :: Ord a => a -> [a] -> Maybe [a]
-        sinsert x [] = Just [x]
+setInsert a xs = tryd xs $ sinsert a xs
+  where sinsert :: Ord a => a -> [a] -> Catch [a]
+        sinsert x [] = return [x]
         sinsert x l@(h:t)
-            | h == x = Nothing
-            | x < h = Just (x:l)
+            | h == x = fail' "sinsert"
+            | x < h = return (x:l)
             | otherwise = do t' <- sinsert x t
                              return (h:t')
 
@@ -140,7 +140,7 @@ netUpdate _ (b, [], NetNode edges tips) =
     NetNode edges $ setInsert b tips
 netUpdate lconsts (b, tm:rtms, NetNode edges tips) =
     let (label, ntms) = labelToStore lconsts tm
-        (child, others) = maybe (netEmpty, edges) id $ mapRemove label edges
+        (child, others) = tryd (netEmpty, edges) $ mapRemove label edges
         newChild = netUpdate lconsts (b, ntms++rtms, child) in
       NetNode (mapInsert label newChild others) tips
 
@@ -179,11 +179,11 @@ follow :: ([HOLTerm], Net a) -> [a]
 follow ([], NetNode _ tips) = tips
 follow (tm:rtms, NetNode edges _) = 
     let (label, ntms) = labelForLookup tm
-        collection = case mapLookup label edges of
+        collection = case mapAssoc label edges of
                        Just child -> follow (ntms++rtms, child)
                        Nothing -> [] in
       if label == VNet then collection
-      else case mapLookup VNet edges of
+      else case mapAssoc VNet edges of
              Just vn -> collection ++ follow (rtms, vn)
              Nothing -> collection
 

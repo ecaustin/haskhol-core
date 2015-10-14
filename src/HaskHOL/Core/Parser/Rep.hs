@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances, IncoherentInstances, MultiParamTypeClasses, 
              TypeSynonymInstances, TypeFamilies #-}
-
 {-|
   Module:    HaskHOL.Core.Parser.Rep
   Copyright: (c) The University of Kansas 2013
@@ -52,15 +51,15 @@ class HOLTypeRep a cls thry where
 
 instance (IsString a, a ~ Text) => HOLTypeRep a cls thry where
     toHTy x = do ctxt <- parseContext 
-                 pty <- liftEither "holTypeParser" $ holTypeParser ctxt x
-                 liftEither "tyElab" $ tyElab ctxt pty
+                 pty <- holTypeParser ctxt x
+                 tyElab ctxt pty
 
 instance thry1 ~ thry2 => HOLTypeRep (PType thry1) cls thry2 where
     toHTy = serve
 
 instance HOLTypeRep PreType cls thry where
     toHTy x = do ctxt <- parseContext
-                 liftEither "tyElab" $ tyElab ctxt x
+                 tyElab ctxt x
 
 instance HOLTypeRep HOLType cls thry where
     toHTy = return
@@ -99,12 +98,12 @@ instance thry1 ~ thry2 => HOLTermRep (PTerm thry1) cls thry2 where
 
 instance (IsString a, a~Text) => HOLTermRep a cls thry where
     toHTm x = do ctxt <- parseContext
-                 ptm <- liftEither "holTermParser" $ holTermParser ctxt x
-                 liftEither "elab" $ elab ctxt ptm
+                 ptm <- holTermParser ctxt x
+                 elab ctxt ptm
                 
 instance HOLTermRep PreTerm cls thry where
     toHTm tm = do ctxt <- parseContext
-                  liftEither "elab" $ elab ctxt tm
+                  elab ctxt tm
 
 instance HOLTermRep HOLTerm cls thry where
     toHTm = return

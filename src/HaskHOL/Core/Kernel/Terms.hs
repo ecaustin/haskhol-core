@@ -338,7 +338,7 @@ varSubst theta term
             mkTyAbs tv =<< varSubstRec env t
         varSubstRec env (TyCombIn t ty) = 
             liftM1 mkTyComb (varSubstRec env t) ty
-        varSubstRec env tm@VarIn{} = return $! lookupd tm env tm
+        varSubstRec env tm@VarIn{} = return $! assocd tm env tm
 
 {-|
   The @Inst@ class provides the framework for type instantiation in HaskHOL.
@@ -386,7 +386,7 @@ instance Inst HOLType HOLType where
                -- avoid capture by renaming type variable
                then let tvt = typeVarsInTerm t
                         tvpatts = map fst tyenv'
-                        tvrepls = catTyVars . mapFilter (`lookup` tyenv') $
+                        tvrepls = catTyVars . mapFilter (`assoc` tyenv') $
                                     tvt `intersect` tvpatts
                         tv' = variantTyVar ((tvt \\ tvpatts) `union` tvrepls) 
                                 tv in
@@ -406,7 +406,7 @@ instance Inst TypeOp HOLType where
         -- avoid capture by renaming type variable
         then let tvbs = typeOpVarsInTerm t
                  tvpatts = map fst tyenv
-                 tvrepls = catTyVars . mapFilter (`lookup` tyenv) $
+                 tvrepls = catTyVars . mapFilter (`assoc` tyenv) $
                              tvbs `intersect` tvpatts
                  tv' = variantTyVar tvrepls tv in
                mkTyAbs tv' =<< instRec env tyenv (inst [(tv, tv')] t)
@@ -434,7 +434,7 @@ instRec :: (MonadCatch m, MonadThrow m, Inst a b)
         => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
 instRec env tyenv tm@(VarIn n ty) =
     let tm' = mkVar n $ typeSubst tyenv ty in
-      if lookupd tm' env tm == tm then return tm' 
+      if assocd tm' env tm == tm then return tm' 
       else throwM $! HOLTermError tm' "instRec: clash"
 instRec _ tyenv (ConstIn s ty tag) =
     let ty' = typeSubst tyenv ty in

@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 {-|
   Module:    HaskHOL.Core.Printer
   Copyright: (c) The University of Kansas 2013
@@ -28,17 +27,25 @@ module HaskHOL.Core.Printer
       ppType
     , ppTerm
     , ppThm
+      -- * Extensible Printer Operators
+    , addUnspacedBinop 
+    , addPrebrokenBinop
+    , removeUnspacedBinop
+    , removePrebrokenBinop
+    , getUnspacedBinops
+    , getPrebrokenBinops
       -- * Printing in the 'HOL' Monad
     , ShowHOL(..)
+    , printContext
+    , initPrintContext
     , printHOL
     ) where
 
 import Prelude hiding ((<$>))
-import HaskHOL.Core.Lib hiding (ask, empty, lefts, rights, base)
+import HaskHOL.Core.Lib hiding (ask, base)
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics
-import HaskHOL.Core.Parser hiding (getInterface)
 
 import HaskHOL.Core.Printer.Prims
 
@@ -46,20 +53,15 @@ import Control.Lens hiding (Const, op, cons, snoc)
 import Control.Monad.ST
 import Data.STRef
 import Control.Monad.Trans
-import Control.Monad.Trans.Except
 import Control.Monad.Trans.Reader
 
 import Text.PrettyPrint.Free
 import System.Console.Terminfo.PrettyPrint
 
-
-data PrintError
-    = PrintError String
-
 type PrintM s = ReaderT (STRef s PrintState) (CatchT (ST s))
 
 data PrintState = PrintState
-    { _prec :: !Integer
+    { _precedence :: !Int
     , _printCtxt :: !PrintContext
     }
 
@@ -69,29 +71,121 @@ initPrintState :: PrintContext -> PrintState
 initPrintState = PrintState 0
 
 modPrintState :: (PrintState -> PrintState) -> PrintM s ()
-modPrintState f = lift $
+modPrintState f =
     do ref <- ask
-       liftM $ modifySTRef' ref f
+       lift . lift $ modifySTRef' ref f
 
 viewPrintState :: (PrintState -> a) -> PrintM s a
-viewPrintState f = lift $
+viewPrintState f =
     do ref <- ask
-       lift . liftM f $ readSTRef ref
+       lift . lift . liftM f $ readSTRef ref
+
+testPrintState :: (PrintState -> a) -> (a -> Bool) -> PrintM s Bool
+testPrintState f p =
+    do ref <- ask
+       liftM p . lift . lift . liftM f $ readSTRef ref
 
 -- utility functions
-getPrec :: PrintM s Integer
-getPrec = viewPrintState $ view prec
+{-| 
+  Specifies a symbol to be recognized as an unspaced, binary operator by the
+  printer.  Applications involving these operators will be built with the '<>'
+  combinator as opposed to '<+>'.
 
-setPrec :: Integer -> PrintM s ()
-setPrec = modPrintState . set prec
+  Note that technically this method should be considered benign, however, for
+  simplicity of implementation it is defined using 'modifyExt' and thus must be
+  tagged a 'Theory' computation.
+-}
+addUnspacedBinop :: Text -> HOL Theory thry ()
+addUnspacedBinop op =
+    overPrintContext unspaced (\ ops -> nub (op:ops))
+
+{-| 
+  Specifies a symbol to be recognized as a prebroken, binary operator by the
+  printer.  Applications involving these operators will have their right-hand
+  side argument printed on the next line using the 'hang' combinator.
+
+  Note that technically this method should be considered benign, however, for
+  simplicity of implementation it is defined using 'modifyExt' and thus must be
+  tagged a 'Theory' computation.
+-}
+addPrebrokenBinop :: Text -> HOL Theory thry ()
+addPrebrokenBinop op =
+    overPrintContext prebroken (\ ops -> nub (op:ops))
+
+{-| 
+  Specifies a symbol to stop being recognized as an unspaced, binary operator 
+  by the printer.
+
+  Note that technically this method should be considered benign, however, for
+  simplicity of implementation it is defined using 'modifyExt' and thus must be
+  tagged a 'Theory' computation.
+-}
+removeUnspacedBinop :: Text -> HOL Theory thry ()
+removeUnspacedBinop op =
+    overPrintContext unspaced (delete op)
+
+{-| 
+  Specifies a symbol to stop being recognized as an prebroken, binary operator 
+  by the printer.
+
+  Note that technically this method should be considered benign, however, for
+  simplicity of implementation it is defined using 'modifyExt' and thus must be
+  tagged a 'Theory' computation.
+-}
+removePrebrokenBinop :: Text -> HOL Theory thry ()
+removePrebrokenBinop op =
+    overPrintContext prebroken (delete op)
+
+{-| 
+  Returns the list of all symbols current recognized as unspaced, binary
+  operators by the printer.
+-}
+getUnspacedBinops :: HOL cls thry [Text]
+getUnspacedBinops =
+    viewPrintContext unspaced
+
+{-| 
+  Returns the list of all symbols current recognized as prebroken, binary
+  operators by the printer.
+-}
+getPrebrokenBinops :: HOL cls thry [Text]
+getPrebrokenBinops =
+    viewPrintContext prebroken
+
+getPrec :: PrintM s Int
+getPrec = viewPrintState $ view precedence
+
+setPrec :: Int -> PrintM s ()
+setPrec = modPrintState . set precedence
 
 getInterface :: PrintM s [(Text, (Text, HOLType))]
 getInterface = viewPrintState $ view (printCtxt . interface)
 
+getLefts :: PrintM s [(Text, Int)]
+getLefts = viewPrintState $ view (printCtxt . lefts)
+
+getRights :: PrintM s [(Text, Int)]
+getRights = viewPrintState $ view (printCtxt . rights)
+
+parsesAsBinder :: Text -> PrintM s Bool
+parsesAsBinder op = testPrintState (view (printCtxt . binders)) (elem op)
+
+parsesAsTyBinder :: Text -> PrintM s Bool
+parsesAsTyBinder op = testPrintState (view (printCtxt . tyBinders)) (elem op)
+
+parsesAsPrefix :: Text -> PrintM s Bool
+parsesAsPrefix op = testPrintState (view (printCtxt . prefixes)) (elem op)
+
+unspacedBinops :: PrintM s [Text]
+unspacedBinops = viewPrintState $ view (printCtxt . unspaced)
+
+prebrokenBinops :: PrintM s [Text]
+prebrokenBinops = viewPrintState $ view (printCtxt . prebroken)
+
 -- | Pretty printer for 'HOLType's.
 ppType :: HOLType -> PrintM s TermDoc
-ppType (TyVar False x) = pretty x
-ppType (TyVar True x) = pretty $ '\'' `cons` x
+ppType (TyVar False x) = return $! pretty x
+ppType (TyVar True x) = return . pretty $ '\'' `cons` x
 ppType ty =
     case destUTypes ty of
       Just (tvs, bod) -> 
@@ -104,7 +198,7 @@ ppType ty =
              let (name, ar) = destTypeOp op
                  name' = if ar < 0 then '_' `cons` name else name
              if null tys 
-                then return $! pretty op
+                then return $! pretty name
                 else case (name', tys) of
                        ("fun", [ty1,ty2]) ->
                            do ty1' <- setPrec 1 >> ppType ty1
@@ -123,7 +217,7 @@ ppType ty =
                               ty2' <- setPrec 7 >> ppType ty2
                               return $! ppTypeApp "^" (prec > 6) [ty1', ty2']
                        (bin, args) -> 
-                           do args' <- mapM (setPrec 0 >> ppType) args
+                           do args' <- mapM (\ x -> setPrec 0 >> ppType x) args
                               return $! ppTypeApp "," True args' <+> pretty bin
   where ppTypeApp :: String -> Bool -> [TermDoc] -> TermDoc
         ppTypeApp sepr flag ds =
@@ -137,20 +231,21 @@ ppType ty =
 ppTerm :: HOLTerm -> PrintM s TermDoc
 ppTerm tm =
 -- numeral case
-    (pretty #<< destNumeral tm) <|>
+    (liftM pretty $ destNumeral tm) <|>
 -- List case
-    brackets (ppTermSeq ";" 0 #<< destList tm) <|>
+    (liftM (encloseSep lbracket rbracket semi) $ 
+             mapM (\ x -> setPrec 0 >> ppTerm x) =<< destList tm) <|>
 -- Type combination case
-    (ppTyComb prec #<< destTyComb tm) <|>
+    (ppTyComb =<< destTyComb tm) <|>
 -- Let case
-    (ppLet prec #<< destLet tm) <|>
+    (ppLet =<< destLet tm) <|>
 -- General abstraction case -- needs work
-    if isGAbs tm then ppGAbs prec tm
+    if isGAbs tm then ppGAbs tm
     else let (hop, args) = stripComb tm in
 -- Base term abstraction case
-    if isAbs hop && null args then ppBinder prec "\\" False hop
+    if isAbs hop && null args then ppBinder "\\" False hop
 -- Base type abstraction case
-    else if isTyAbs hop && null args then ppBinder prec "\\\\" True hop
+    else if isTyAbs hop && null args then ppBinder "\\\\" True hop
 -- Reverse interface for other cases
     else let s0 = nameOf hop
              ty0 = typeOf hop in
@@ -158,73 +253,64 @@ ppTerm tm =
 -- Match terms
        if s == "_MATCH" && length args == 2 && 
           --not ideal from a performance aspect, but it makes things cleaner 
-          isJust (destClauses $ args !! 1)
-          then let (m:cs:_) = args in ppMatch prec m cs                       
+          test' (destClauses $ args !! 1)
+          then let (m:cs:_) = args in ppMatch m cs                       
 -- Conditional case
           else if s == "COND" && length args == 3
-          then let (c:t:e:_) = args in ppCond prec c t e                    
+          then let (c:t:e:_) = args in ppCond c t e                    
 -- Prefix operator case           
           else do cond1 <- parsesAsPrefix s
                   if cond1 && length args == 1 
-                     then ppPrefix prec s (head args)
+                     then ppPrefix s (head args)
 -- Non-lambda term and type binder case
-                     else ppBinders prec s hop args tm <|> 
-                          (ppComb prec #<< destComb tm) <|>
-                          text "ppTerm: printer error - unrecognized term"  
-  where ppTermSeq :: Text -> Int -> [HOLTerm] -> TermDoc
-        ppTermSeq sepr prec' = ppTermSeqRec
-          where ppTermSeqRec [] = empty
-                ppTermSeqRec [x] = ppTerm prec' x
-                ppTermSeqRec (x:xs) =
-                  ppTerm prec' x <+> text sepr <+> ppTermSeqRec xs     
+                     else ppBinders s hop args tm <|> 
+                          (ppComb =<< destComb tm) <|>
+                          fail' "ppTerm: printer error - unrecognized term"     
 
-ppBinders :: Int -> Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> TermDoc
-ppBinders prec s hop args tm =
+ppBinders :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s TermDoc
+ppBinders s hop args tm =
      do cond2 <- parsesAsBinder s
         if cond2 && length args == 1 && isGAbs (head args)
-        then ppBinder prec s False tm
+        then ppBinder s False tm
 -- Non-lambda type binder case
         else do cond3 <- parsesAsTyBinder s
                 if cond3 && length args == 1 && isTyAbs (head args)
-                then ppBinder prec s True tm
+                then ppBinder s True tm
 -- Infix operator case
-                else ppOperators prec s hop args tm
+                else ppOperators s hop args tm
 
-ppOperators :: Int -> Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> TermDoc
-ppOperators prec s hop args tm =
-    do getRight <- liftM (lookup s) rights
-       getLeft <- liftM (lookup s) lefts
-       if (isJust getRight || isJust getLeft) && length args == 2
-          then do (barg:bargs) <- 
-                     if isJust getRight
+ppOperators :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s TermDoc
+ppOperators s hop args tm =
+    do getRight <- liftM (assoc s) getRights
+       getLeft <- liftM (assoc s) getLefts
+       if (test' getRight || test' getLeft) && length args == 2
+          then do args' <- 
+                     if test' getRight
                      then do (tms, tmt) <- splitListM (destBinaryTm hop) tm
                              return $! tms ++ [tmt]
                      else do (tmt, tms) <- revSplitListM (destBinaryTm hop) tm
                              return $! tmt:tms 
-                  let newprec = fromMaybe 0 (getRight <|> getLeft)
+                  prec <- getPrec
+                  uops <- unspacedBinops
+                  pops <- prebrokenBinops
+                  let newprec = tryd 0 (getRight <|> getLeft)
                       wrapper = if newprec <= prec then parens else id
-                      sepr x y = 
-                          do ops <- getUnspacedBinops
-                             if s `elem` ops
-                                then cat $ sequence [x, y] 
-                                else sep $ sequence [x, y]
-                      hanger x y = 
-                          do ops <- getPrebrokenBinops
-                             if s `elem` ops
-                             then x `sepr` (text s <+> y)
-                             else (x <+> text s) `sepr` y
-                  wrapper $ foldr (\ x acc -> acc `hanger` 
-                                              ppTerm newprec x)
-                              (ppTerm newprec barg) $ reverse bargs
+                      sepr = if s `elem` uops then (<>) else (<+>)
+                      hanger x y = if s `elem` pops
+                                   then x `sepr` (pretty s <+> y)
+                                   else (x <+> pretty s) `sepr` y
+                  (barg:bargs) <- mapM (\x -> setPrec newprec >> ppTerm x) args'
+                  return . wrapper . foldr (\ x acc -> acc `hanger` x) barg $ 
+                             reverse bargs
 -- Base constant or variable case
           else ppConstants s hop args
-  where destBinaryTm :: HOLTerm -> HOLTerm -> (HOLTerm, HOLTerm)
+  where destBinaryTm :: HOLTerm -> HOLTerm -> PrintM s (HOLTerm, HOLTerm)
         destBinaryTm c t =
-            do (il, r) <- liftO $ destComb t
-               (i, l) <- liftO $ destComb il
+            do (il, r) <- destComb t
+               (i, l) <- destComb il
                if i == c
-                  then do i' <- liftO $ destConst i <|> destVar i
-                          c' <- liftO $ destConst c <|> destVar c
+                  then do i' <- destConst i <|> destVar i
+                          c' <- destConst c <|> destVar c
                           i'' <- uncurry reverseInterface i'
                           c'' <- uncurry reverseInterface c'
                           if i'' == c''
@@ -232,17 +318,18 @@ ppOperators prec s hop args tm =
                              else fail "destBinaryTm"
                   else fail "destBinaryTm"
 
-ppConstants :: Text -> HOLTerm -> [HOLTerm] -> TermDoc
+ppConstants :: Text -> HOLTerm -> [HOLTerm] -> PrintM s TermDoc
 ppConstants s hop args
     | null args && (isConst hop || isVar hop) =
           do cond1 <- parsesAsBinder s
              cond2 <- parsesAsTyBinder s
-             cond3 <- liftM (isJust . lookup s) rights
-             cond4 <- liftM (isJust . lookup s) lefts
+             cond3 <- liftM (test' . assoc s) getRights
+             cond4 <- liftM (test' . assoc s) getLefts
              cond5 <- parsesAsPrefix s
-             if cond1 || cond2 || cond3 || cond4 || cond5
-                then parens $ text s
-                else text s
+             let base = pretty s
+             return $! if cond1 || cond2 || cond3 || cond4 || cond5
+                       then parens base
+                       else base
 -- Base combination case 
     | otherwise = fail "ppConstants: fall back to ppComb case."          
 
@@ -256,38 +343,30 @@ reverseInterface s0 ty0 =
     do iface <- getInterface
        let s1 = find (\ (_, (s', ty)) -> 
                       s' == s0 && 
-                      isJust (typeMatch ty ty0 ([], [], []))) iface
+                      test' (typeMatch ty ty0 ([], [], []))) iface
        return $! maybe s0 fst s1
 
-grabInfix :: Text -> [(Text, (Int, Text))] -> [(Text, Int)]
-grabInfix a = 
-    mapMaybe $ \ (x, (n, a')) -> if a == a' then Just (x, n) else Nothing
-
-lefts :: HOL cls thry [(Text, Int)]
-lefts = liftM (grabInfix "left") infixes
-
-rights :: HOL cls thry [(Text, Int)]
-rights = liftM (grabInfix "right") infixes
-
-ppTyComb :: Int -> (HOLTerm, HOLType) -> TermDoc
-ppTyComb prec (t, ty) =
-    let base = ppTerm 999 t <+> 
-               brackets (char ':' <> ppType ty) in
-      if prec == 1000 then parens base else base
+ppTyComb :: (HOLTerm, HOLType) -> PrintM s TermDoc
+ppTyComb (t, ty) =
+    do prec <- getPrec
+       t' <- setPrec 999 >> ppTerm t
+       ty' <- setPrec prec >> ppType ty
+       let base = t' <+> brackets (char ':' <> ty')
+       return $! if prec == 1000 then parens base else base
 
 ppLet :: ([(HOLTerm, HOLTerm)], HOLTerm) -> PrintM s TermDoc
 ppLet (eqs@(_:_), bod) =
     do prec <- getPrec
        eqs' <- mapM ppLet' eqs
        bod' <- setPrec 0 >> ppTerm bod
-       let base = (text "let" <+> sepBy (text "and") eqs' <+> text "in") `above`
-                  indext 2 bod'
+       let base = (text "let" <+> encloseSep empty empty (text "and") eqs' <+> 
+                   text "in") `above` indent 2 bod'
        return $! if prec == 0 then base else parens base 
   where ppLet' :: (HOLTerm, HOLTerm) -> PrintM s TermDoc
         ppLet' x =
             (do x' <- uncurry primMkEq x
-                setPrec 0 >>= ppTerm x') `catchM` 
-            (\ _ -> return $! text "<*bad let binding*>")
+                setPrec 0 >> ppTerm x') <|> 
+            (return $! text "<*bad let binding*>")
 ppLet (_, bod) = ppTerm bod
 
 ppGAbs :: HOLTerm -> PrintM s TermDoc
@@ -379,7 +458,7 @@ destClauses tm =
                                let tm'2 = head $ tail args
                                tm'3 <- rand =<< rator (args !! 2)
                                return [tm'1, tm'2, tm'3]
-                       else throwM $! HOLTermError "destClause"
+                       else fail' "destClause"
 
 ppCond :: HOLTerm -> HOLTerm -> HOLTerm -> PrintM s TermDoc
 ppCond c t e =

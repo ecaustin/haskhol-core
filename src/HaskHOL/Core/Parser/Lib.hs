@@ -57,16 +57,6 @@ module HaskHOL.Core.Parser.Lib
     , mysepBy1
     , mytry
     , (<|>)
-      -- * Pretty Printer Flags
-    , FlagRevInterface(..)
-    , FlagPrintAllThm(..)
-      -- * Extensible Printer Operators
-    , addUnspacedBinop 
-    , addPrebrokenBinop
-    , removeUnspacedBinop
-    , removePrebrokenBinop
-    , getUnspacedBinops
-    , getPrebrokenBinops
       -- * Parser state manipulations
     , getState
     , gets
@@ -76,7 +66,6 @@ module HaskHOL.Core.Parser.Lib
 
 import HaskHOL.Core.Lib hiding ((<|>), (<?>))
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
 
 import HaskHOL.Core.Parser.Prims
 
@@ -87,65 +76,6 @@ import Text.Parsec.Language
 import Text.Parsec.Token
 
 import Control.Lens hiding (op)
-
--- new flags and extensions
--- | Flag to indicate whether the interface should be reversed on printing.
-newFlag "FlagRevInterface" True
-
-{-| 
-  Flag to indicate if the entirety of a theorem should be printed, as opposed
-  to just the conclusion term.
--}
-newFlag "FlagPrintAllThm" True
-
-data UnspacedBinops = UnspacedBinops ![Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''UnspacedBinops
-
-initUnspaced :: [Text]
-initUnspaced = [",", "..", "$"]
-
-insertUnspaced :: Text -> Update UnspacedBinops ()
-insertUnspaced op =
-    do (UnspacedBinops ops) <- get
-       put (UnspacedBinops (op:ops))
-
-removeUnspaced :: Text -> Update UnspacedBinops ()
-removeUnspaced op =
-    do (UnspacedBinops ops) <- get
-       put (UnspacedBinops (ops \\ [op]))
-
-getUnspaced :: Query UnspacedBinops [Text]
-getUnspaced =
-    do (UnspacedBinops ops) <- ask
-       return ops
-
-makeAcidic ''UnspacedBinops ['insertUnspaced, 'removeUnspaced, 'getUnspaced]
-
-
-data PrebrokenBinops = PrebrokenBinops ![Text] deriving Typeable
-
-deriveSafeCopy 0 'base ''PrebrokenBinops
-
-initPrebroken :: [Text]
-initPrebroken = ["==>"]
-
-insertPrebroken :: Text -> Update PrebrokenBinops ()
-insertPrebroken op =
-    do (PrebrokenBinops ops) <- get
-       put (PrebrokenBinops (op:ops))
-
-removePrebroken :: Text -> Update PrebrokenBinops ()
-removePrebroken op =
-    do (PrebrokenBinops ops) <- get
-       put (PrebrokenBinops (ops \\ [op]))
-
-getPrebroken :: Query PrebrokenBinops [Text]
-getPrebroken =
-    do (PrebrokenBinops ops) <- ask
-       return ops
-
-makeAcidic ''PrebrokenBinops ['insertPrebroken, 'removePrebroken, 'getPrebroken]
 
 -- | The default 'PreType' to be used as a blank for the type inference engine.
 dpty :: PreType
@@ -174,9 +104,9 @@ type MyParser = Parsec Text (Map Text Int, Int, ParseContext)
 {-| Runs a custom parser when provided with an input 'String' and a 
     'HOLContext'.
 -}
-runHOLParser :: MyParser a -> ParseContext -> Text -> Either String a
+runHOLParser :: MonadThrow m => MyParser a -> ParseContext -> Text -> m a
 runHOLParser parser ctxt input =
-    either (Left . show) return $ runParser parser (mapEmpty, 0, ctxt) "" input
+    either (fail' . show) return $ runParser parser (mapEmpty, 0, ctxt) "" input
 
 -- | The Parsec 'LanguageDef' for HaskHOL.
 langDef :: Monad m => GenLanguageDef Text st m
@@ -279,86 +209,6 @@ mysepBy1 = P.sepBy1
 -- | A re-export of 'P.try'.
 mytry :: MyParser a -> MyParser a
 mytry = P.try
-
-{-| 
-  Specifies a symbol to be recognized as an unspaced, binary operator by the
-  printer.  Applications involving these operators will be built with the '<>'
-  combinator as opposed to '<+>'.
-
-  Note that technically this method should be considered benign, however, for
-  simplicity of implementation it is defined using 'modifyExt' and thus must be
-  tagged a 'Theory' computation.
--}
-addUnspacedBinop :: Text -> HOL Theory thry ()
-addUnspacedBinop op =
-    do acid <- openLocalStateHOL (UnspacedBinops initUnspaced)
-       updateHOL acid (InsertUnspaced op)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Specifies a symbol to be recognized as a prebroken, binary operator by the
-  printer.  Applications involving these operators will have their right-hand
-  side argument printed on the next line using the 'hang' combinator.
-
-  Note that technically this method should be considered benign, however, for
-  simplicity of implementation it is defined using 'modifyExt' and thus must be
-  tagged a 'Theory' computation.
--}
-addPrebrokenBinop :: Text -> HOL Theory thry ()
-addPrebrokenBinop op =
-    do acid <- openLocalStateHOL (PrebrokenBinops initPrebroken)
-       updateHOL acid (InsertPrebroken op)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Specifies a symbol to stop being recognized as an unspaced, binary operator 
-  by the printer.
-
-  Note that technically this method should be considered benign, however, for
-  simplicity of implementation it is defined using 'modifyExt' and thus must be
-  tagged a 'Theory' computation.
--}
-removeUnspacedBinop :: Text -> HOL Theory thry ()
-removeUnspacedBinop op =
-    do acid <- openLocalStateHOL (UnspacedBinops initUnspaced)
-       updateHOL acid (RemoveUnspaced op)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Specifies a symbol to stop being recognized as an prebroken, binary operator 
-  by the printer.
-
-  Note that technically this method should be considered benign, however, for
-  simplicity of implementation it is defined using 'modifyExt' and thus must be
-  tagged a 'Theory' computation.
--}
-removePrebrokenBinop :: Text -> HOL Theory thry ()
-removePrebrokenBinop op =
-    do acid <- openLocalStateHOL (PrebrokenBinops initPrebroken)
-       updateHOL acid (RemovePrebroken op)
-       createCheckpointAndCloseHOL acid
-
-{-| 
-  Returns the list of all symbols current recognized as unspaced, binary
-  operators by the printer.
--}
-getUnspacedBinops :: HOL cls thry [Text]
-getUnspacedBinops =
-    do acid <- openLocalStateHOL (UnspacedBinops initUnspaced)
-       ops <- queryHOL acid GetUnspaced
-       closeAcidStateHOL acid
-       return ops
-
-{-| 
-  Returns the list of all symbols current recognized as prebroken, binary
-  operators by the printer.
--}
-getPrebrokenBinops :: HOL cls thry [Text]
-getPrebrokenBinops =
-    do acid <- openLocalStateHOL (PrebrokenBinops initUnspaced)
-       ops <- queryHOL acid GetPrebroken
-       closeAcidStateHOL acid
-       return ops
 
 -- Re-exports
 -- | A re-export of 'P.runParserT'.

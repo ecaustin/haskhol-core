@@ -285,7 +285,7 @@ typeTypeSubst tyenv t =
                                         x `elem` tyVars tbody) tyins'
                    then let tvbs = tyVars tbody
                             tvpatts = map fst tyins'
-                            tvrepls = catTyVars . mapFilter (`lookup` tyins') $
+                            tvrepls = catTyVars . mapFilter (`assoc` tyins') $
                                         intersect tvbs tvpatts
                             tv' = variantTyVar ((tvbs \\ tvpatts) `union` 
                                                   tvrepls) tv in
@@ -468,7 +468,7 @@ typeOpSubst tyopenv t =
             do args' <- mapM (tyOpSubstRec tyopins) args
                case runCatch $ tryFind (\ (tp, tr) ->
                       if tp /= op || snd (destTypeOp tr) /= length args
-                      then mzero
+                      then fail' "tyOpSubstRec"
                       else return tr) tyopins of
                  Left{}    -> tyApp op args'
                  Right op' -> tyApp op' args'
@@ -492,7 +492,7 @@ typeOpInst tyopenv t =
                case runCatch $ tryFind (\ (tp, tr) ->
                       do n <- arityOf tr
                          if tp /= op || n /= length args
-                            then mzero
+                            then fail' "tyOpInstRec"
                             else destUTypes ty) tyopins of
                  Left{} -> tyApp op args'
                  Right (rtvs, rtbody)
@@ -505,7 +505,7 @@ typeOpInst tyopenv t =
             -- test for name capture, renaming instances of tv if necessary 
             then let tvbs = typeOpVars tbody
                      tvpatts = map fst tyopins
-                     tvrepls = catTyVars . mapFilter (`lookup` tyopins) $
+                     tvrepls = catTyVars . mapFilter (`assoc` tyopins) $
                                  intersect tvbs tvpatts
                      tv' = variantTyVar tvrepls tv
                      tbody' = typeSubst [(tv, tv')] tbody in

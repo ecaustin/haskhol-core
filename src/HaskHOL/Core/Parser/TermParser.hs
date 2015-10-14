@@ -68,7 +68,7 @@ import HaskHOL.Core.Parser.TypeParser
 import Control.Lens (view, views)
 
 -- | Parser for 'HOLTerm's.
-holTermParser :: ParseContext -> Text -> Either String PreTerm
+holTermParser :: MonadThrow m => ParseContext -> Text -> m PreTerm
 holTermParser = runHOLParser pterm
 
 -- | Parse method for HOL terms.
@@ -221,7 +221,7 @@ pfrees ptm@(PVar v pty) acc
     | textNull v && pty == dpty = return acc
     | otherwise = 
           do cond1 <- getConstType' v
-             let cond2 = isJust (numOfString (unpack v) :: Maybe Integer)
+             let cond2 = test' (numOfString (unpack v) :: Catch Integer)
              cond3 <- getInterface' v
              if cond1 || cond2 || cond3
                 then return acc
@@ -239,10 +239,10 @@ pfrees (TyPAbs _ p) acc = pfrees p acc
 pfrees (TyPComb p _ _) acc = pfrees p acc
 
 
-pdestEq :: PreTerm -> Maybe (PreTerm, PreTerm)
-pdestEq (PComb (PComb (PVar "=" _) l) r) = Just (l, r)
-pdestEq (PComb (PComb (PVar "<=>" _) l) r) = Just (l, r)
-pdestEq _ = Nothing
+pdestEq :: MonadThrow m => PreTerm -> m (PreTerm, PreTerm)
+pdestEq (PComb (PComb (PVar "=" _) l) r) = return (l, r)
+pdestEq (PComb (PComb (PVar "<=>" _) l) r) = return (l, r)
+pdestEq _ = fail' "pdestEq"
 
 mkLet :: [PreTerm] -> PreTerm -> Maybe PreTerm
 mkLet binds bod = case length tms of
@@ -332,11 +332,7 @@ pLeftBinary prs sep cns =
 
 -- pure versions of stateful methods
 getConstType' :: Text -> MyParser Bool
-getConstType' x = gets $ views termConstants (isJust . mapLookup x)
+getConstType' x = gets $ views termConstants (test' . mapAssoc x)
 
 getInterface' :: Text -> MyParser Bool
-getInterface' x = gets $ views interface (isJust . lookup x)
-
-isJust :: Maybe a -> Bool
-isJust Just{} = True
-isJust Nothing = False
+getInterface' x = gets $ views interface (test' . assoc x)

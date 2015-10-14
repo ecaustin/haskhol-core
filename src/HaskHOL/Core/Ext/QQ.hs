@@ -57,13 +57,14 @@ baseQuoter thry ctxt = QuasiQuoter quoteBaseExps nothing nothing nothing
           
           nothing _ = fail "quoting here not supported"
           
-          body :: Protected b => (ParseContext -> a -> Either String b) 
-               -> (ParseContext -> Text -> Either String a)
+          body :: Protected b 
+               => (ParseContext -> a -> Catch b) 
+               -> (ParseContext -> Text -> Catch a)
                -> Text -> Q Exp
           body efun pfun x' =
-              do px <- liftEither "quoter -- parsing" $ pfun ctxt x'
-                 res <- liftEither "quoter -- elaborating" $ efun ctxt px
-                 liftProtectedExp $ protect thry res
+              case runCatch $ efun ctxt =<< pfun ctxt x' of
+                Right res -> liftProtectedExp $ protect thry res
+                Left  err -> fail $ show err
 
 {-| 
   An instance of 'baseQuoter' for the core theory context, 'ctxtBase'.

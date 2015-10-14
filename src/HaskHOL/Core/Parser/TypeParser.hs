@@ -58,7 +58,7 @@ import HaskHOL.Core.Kernel.Types
 import Control.Lens (view)
 
 -- | Parser for 'HOLType's.
-holTypeParser :: ParseContext -> Text -> Either String PreType
+holTypeParser :: MonadThrow m => ParseContext -> Text -> m PreType
 holTypeParser = runHOLParser ptype
 
 -- | Parse method for HOL types.
@@ -84,9 +84,9 @@ popvar =
        -}
        let x' = '_' `cons` x
        (opvars, _, _) <- getState
-       case mapLookup x' opvars of
-         Nothing -> return . Left $ UTyVar False x' 0
-         Just n -> return . Right $ UTyVar False x' n
+       case runCatch $ mapAssoc x' opvars of
+         Left{} -> return . Left $ UTyVar False x' 0
+         Right n -> return . Right $ UTyVar False x' n
 
 pbinty :: String -> Text -> MyParser PreType -> MyParser PreType 
        -> MyParser PreType
@@ -188,9 +188,9 @@ patomty =
                           "arity outside of application")
     <|> (do x <- myidentifier
             tyabvs <- gets $ view typeAbbrevs
-            case mapLookup x tyabvs of
-              Just ty -> return $! pretypeOfType ty
-              Nothing ->
+            case runCatch $ mapAssoc x tyabvs of
+              Right ty -> return $! pretypeOfType ty
+              Left{} ->
                 do cond <- getTypeArity' x
                    case cond of
                      Nothing -> return $! UTyVar False x 0
@@ -201,4 +201,4 @@ patomty =
 getTypeArity' :: Text -> MyParser (Maybe Int)
 getTypeArity' x =
     do tys <- gets $ view typeConstants
-       return . liftM (snd . destTypeOp) $ mapLookup x tys
+       return . liftM (snd . destTypeOp) $ mapAssoc x tys

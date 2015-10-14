@@ -25,10 +25,7 @@
 -}
 module HaskHOL.Core.Lib
     ( -- * Function Combinators
-      iComb
-    , kComb
-    , cComb
-    , wComb
+      wComb
     , ffComb
     , ffCombM
     , liftM1
@@ -45,25 +42,21 @@ module HaskHOL.Core.Lib
     , tryHead
     , tryTail
     , tryInit
-    , butLast
     , tryLast
     , tryIndex
-    , el
-    , rev
       -- * Basic Operations on Association Lists
     , assoc
-    , revLookup
     , revAssoc
     , assocd
-    , lookupd
-    , revLookupd
     , revAssocd
       -- * Methods for Error Handling
     , (<|>)
     , (<?>)
+    , fail'
     , failWhen
-    , mzero
+    , maybeToFail
     , try'
+    , tryd
     , test'
     , can
     , can'
@@ -75,22 +68,15 @@ module HaskHOL.Core.Lib
     , repeatM
     , map2
     , map2M
-    , doList
     , allpairs
       -- * Methods for List Iteration
-    , itlist
-    , itlistM
     , foldrM
-    , revItlist
     , foldlM
     , tryFoldr1
-    , endItlist
     , foldr1M
     , foldr2
-    , itlist2
     , foldr2M
     , foldl2 
-    , revItlist2
     , foldl2M
       -- * Methods for Sorting and Merging Lists
     , sort
@@ -103,31 +89,24 @@ module HaskHOL.Core.Lib
     , revSplitList
     , revSplitListM
     , nsplit
-    , nsplitM 
     , stripList  
     , stripListM 
       -- * Methods for Searching and Manipulating Lists
-    , forall  
-    , forall2 
-    , exists   
+    , all2 
     , partition 
     , mapFilter 
     , mapFilterM
     , find      
     , findM   
     , tryFind  
-    , flat     
     , dropWhileEnd
     , remove   
-    , trySplitAt 
-    , chopList  
-    , elemIndex
+    , trySplitAt
     , index
     , stripPrefix
     , uniq
     , shareOut
-      -- * Set Operations on Lists
-    , mem     
+      -- * Set Operations on Lists   
     , insert
     , insertMap
     , union 
@@ -179,7 +158,7 @@ module HaskHOL.Core.Lib
     , mapInsert
     , mapUnion
     , mapDelete
-    , mapLookup
+    , mapAssoc
     , mapElems
     , mapFromList
     , mapToList
@@ -259,7 +238,6 @@ import qualified Data.Function as DF (on)
 import qualified Data.List as L
 import Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.Maybe as Maybe
 import qualified Data.Ratio as R
 import Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as Text
@@ -279,18 +257,6 @@ import Data.Bits
 import Data.Hashable
 
 -- combinators
-
--- | The I combinator.  An alias for 'id'.
-iComb :: a -> a
-iComb = id
-
--- | The K combinator.  An alias for 'const'.
-kComb :: a -> b -> a
-kComb = const
-
--- | The C combinator.  An alias for 'flip'.
-cComb :: (a -> b -> c) -> b -> a -> c
-cComb = flip
 
 {-| 
   The W combinator.  Takes a function of arity 2 and applies a single argument
@@ -361,104 +327,58 @@ secondM :: Monad m => (b -> m c) -> (a, b) -> m (a, c)
 secondM = A.runKleisli . A.second . A.Kleisli
 
 -- list basics
-{-| 
-  A safe version of 'head'.  Fails with 'Nothing' when trying to take the head
-  of an empty list.
--}
-tryHead :: [a] -> Maybe a
-tryHead (x:_) = Just x
-tryHead _ = Nothing
+-- | A guarded version of 'head'.
+tryHead :: MonadThrow m => [a] -> m a
+tryHead (x:_) = return x
+tryHead _ = fail' "tryHead"
 
-{-| 
-  A safe version of 'tail'.  Fails with 'Nothing' when trying to take the tail
-  of an empty list.
--}
-tryTail :: [a] -> Maybe [a]
-tryTail (_:t) = Just t
-tryTail _ = Nothing
+-- | A guarded version of 'tail'.
+tryTail :: MonadThrow m => [a] -> m [a]
+tryTail (_:t) = return t
+tryTail _ = fail' "tryTail"
 
-{-|
-  A safe version of 'init'.  Fails with 'Nothing' when trying to drop the last
-  element of an empty list.
--}
-tryInit :: [a] -> Maybe [a]
-tryInit [_] = Just []
-tryInit (x:xs) = do xs' <- tryInit xs
-                    return (x:xs')
-tryInit _ = Nothing
+-- | A guarded version of 'init'.
+tryInit :: MonadThrow m => [a] -> m [a]
+tryInit [_] = return []
+tryInit (x:xs) = liftM ((:) x) $ tryInit xs
+tryInit _ = fail' "tryInit"
 
--- | An alias to 'tryInit' for HOL users more familiar with this name.
-butLast :: [a] -> Maybe [a]
-butLast = tryInit
-
-{-| 
-  A safe version of 'last'.  Fails with 'Nothing' when trying to take the last
-  element of an empty list.
--}
-tryLast :: [a] -> Maybe a
-tryLast [x] = Just x
+-- | A guarded version of 'last'.
+tryLast :: MonadThrow m => [a] -> m a
+tryLast [x] = return x
 tryLast (_:xs) = tryLast xs
-tryLast _ = Nothing
+tryLast _ = fail' "tryLast"
 
-{-| 
-  A safe version of 'index'.  Fails with 'Nothing' if the selected index does
-  not exist.
--}
-tryIndex :: [a] -> Int -> Maybe a
+-- | A guarded version of 'index'.
+tryIndex :: MonadThrow m => [a] -> Int -> m a
 tryIndex xs n
     | n >= 0 = tryHead $ drop n xs
-    | otherwise = Nothing
-
-{-|
-  An alias to 'tryIndex' for HOL users more familiar with this name.  Note that
-  the order of the arguments is flipped.
--}
-el :: Int -> [a] -> Maybe a
-el = flip tryIndex
-
--- | An alias to 'reverse' for HOL users more familiar with this name.
-rev :: [a] -> [a]
-rev = reverse
+    | otherwise = fail' "tryIndex"
 
 -- association lists
--- | An alias to 'lookup' for HOL users more familiar with this name.
-assoc :: Eq a => a -> [(a, b)] -> Maybe b
-assoc = lookup
+-- | A guarded alias to 'lookup'.
+assoc :: (MonadThrow m, Eq a) => a -> [(a, b)] -> m b
+assoc x = maybeToFail "assoc" . lookup x
 
 {-| 
-  A version of 'lookup' where the search is performed against the second element
-  of the pair instead of the first.  Still fails with 'Nothing' if the desired
-  value is not found.
+  A guarded version of 'lookup' where the search is performed against the 
+  second element of the pair instead of the first.
 -}
-revLookup :: Eq a => a -> [(b, a)] -> Maybe b
-revLookup _ [] = Nothing
-revLookup x ((f, s):as)
-  | x == s = Just f
-  | otherwise = revLookup x as
+revAssoc :: (MonadThrow m, Eq a) => a -> [(b, a)] -> m b
+revAssoc _ [] = fail' "revAssoc"
+revAssoc x ((f, s):as)
+  | x == s = return f
+  | otherwise = revAssoc x as
 
--- | An alias to 'revLookup' for HOL users who are more familiar with this name.
-revAssoc :: Eq a => a -> [(b, a)] -> Maybe b
-revAssoc = revLookup
-
--- | A version of 'lookup' that defaults to a provided value rather than fail.
-lookupd :: Eq a => a -> [(a, b)] -> b -> b
-lookupd x xs b = maybe b id $ lookup x xs
-
--- | An alias to 'lookupd' for HOL users who are more familiar with this name.
+-- | A version of 'assoc' that defaults to a provided value rather than fail.
 assocd :: Eq a => a -> [(a, b)] -> b -> b
-assocd = lookupd
+assocd x xs b = tryd b $ assoc x xs
 
 {-| 
-  A version of 'revLookup' that defaults to a provided value rather than fail.
--}
-revLookupd :: Eq a => a -> [(b, a)] -> b -> b
-revLookupd x xs b = maybe b id $ revLookup x xs
-
-{-| 
-  An alias to 'revLookupd' for HOL users who are more familiar with this name.
+  A version of 'revAssoc' that defaults to a provided value rather than fail.
 -}
 revAssocd :: Eq a => a -> [(b, a)] -> b -> b
-revAssocd = revLookupd
+revAssocd x xs b = tryd b $ revAssoc x xs
 
 -- error handling and checking
 
@@ -471,27 +391,27 @@ job <|> err = job `catch` ferr
 
 infix 0 <?>
 (<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
-m <?> str = m <|> (throwM $! HOLErrorMsg str)
+m <?> str = m <|> (fail' str)
+
+fail' :: MonadThrow m => String -> m a
+fail' = throwM . HOLErrorMsg
 
 failWhen :: (MonadCatch m, MonadThrow m) => m Bool -> String -> m ()
 failWhen m str =
     do cond <- m
-       when cond . throwM $! HOLErrorMsg str
+       when cond $ fail' str
 
-mzero :: MonadThrow m => m a
-mzero = throwM $! HOLMZero
+maybeToFail :: MonadThrow m => String -> Maybe a -> m a
+maybeToFail str = maybe (fail' str) return
 
 try' :: Catch a -> a
-try' m =
-    case runCatch m of
-      Right res -> res
-      _         -> error "try'"
+try' = either (\ _ -> error "try'") id . runCatch
+
+tryd :: a -> Catch a -> a
+tryd d = either (const d) id . runCatch
 
 test' :: Catch a -> Bool
-test' m =
-    case runCatch m of
-      Right{} -> True
-      _       -> False
+test' = either (const False) (const True) . runCatch
 
 {-| 
   Returns a boolean value indicating whether a monadic computation succeeds or
@@ -518,12 +438,12 @@ canNot f x = (f x >> return False) <|> return True
 
 {-| 
   Checks if a predicate succeeds for a provided value, returning that value
-  guarded by a 'Maybe' type if so.
+  guarded if so.
 -} 
-check :: (a -> Bool) -> a -> Maybe a
+check :: MonadThrow m => (a -> Bool) -> a -> m a
 check p x
-  | p x = Just x
-  | otherwise = Nothing
+  | p x = return x
+  | otherwise = fail' "check"
 
 -- repetition of a functions
 {-| 
@@ -549,35 +469,20 @@ repeatM :: MonadCatch m => (a -> m a) -> a -> m a
 repeatM f x = (repeatM f =<< f x) <|> return x
 
 
-{-| 
-  A safe version of a list map for functions of arity 2.  Fails with 'Nothing'
-  if the two lists are of different lengths.
--}
-map2 :: (a -> b -> c) -> [a] -> [b] -> Maybe [c]
-map2 _ [] [] = Just []
-map2 f (x:xs) (y:ys) =
-  do zs <- map2 f xs ys
-     return $! f x y : zs
-map2 _ _ _ = Nothing
+-- | A guarded version of a list map for functions of arity 2.
+map2 :: MonadThrow m => (a -> b -> c) -> [a] -> [b] -> m [c]
+map2 _ [] [] = return []
+map2 f (x:xs) (y:ys) = liftM ((:) (f x y)) $ map2 f xs ys
+map2 _ _ _ = fail' "map2"
 
-{-| 
-  The monadic version of 'map2'.  Fails with 'mzero' if the two lists are of
-  different lengths.
--}
+-- | A version of 'map2' that accepts monadic functions.
 map2M :: MonadThrow m => (a -> b -> m c) -> [a] -> [b] -> m [c]
 map2M _ [] [] = return []
 map2M f (x:xs) (y:ys) =
   do h <- f x y
      t <- map2M f xs ys
      return (h : t)
-map2M _ _ _ = throwM $! HOLErrorMsg "map2M"
-
-{-|
-  Map a monadic function over a list, ignoring the results.  A re-export of 
-  'mapM_'.
--}
-doList :: Monad m => (a -> m b) -> [a] -> m ()
-doList = mapM_
+map2M _ _ _ = fail' "map2M"
 
 -- all pairs arrising from applying a function over two lists
 {-|
@@ -591,110 +496,52 @@ allpairs _ [] _ = []
 allpairs f (h:t) l2 = foldr (\ x a -> f h x : a) (allpairs f t l2) l2
 
 -- list iteration
-{-| 
-  An alias to 'foldr' for HOL users more familiar with this name.  Note that the
-  order of the list and base case arguments is flipped.
--}
-itlist :: (a -> b -> b) -> [a] -> b -> b
-itlist f = flip (foldr f)
-
--- | The monadic version of 'itlist'.
-itlistM :: (F.Foldable t, Monad m) => (a -> b -> m b) -> t a -> b -> m b
-itlistM f = flip (F.foldrM f)
-
 -- | The monadic version of 'foldr'.  A re-export of 'F.foldrM'.
 foldrM :: (F.Foldable t, Monad m) => (a -> b -> m b) -> b -> t a -> m b
 foldrM = F.foldrM
-
-{-|
-  An alias to 'foldl' for HOL users more familiar with this name.  Note that the
-  order of the list and base case arguments is flipped, as is the order of the
-  arguments to the function.
--}
-revItlist :: (a -> b -> b) -> [a] -> b -> b
-revItlist f = flip (foldl $ flip f)
 
 -- | The monadic version of 'foldl'.  A re-export of 'F.foldlM'.
 foldlM :: (F.Foldable t, Monad m) => (a -> b -> m a) -> a -> t b -> m a
 foldlM = F.foldlM
 
-{-| 
-  A safe version of 'foldr1'.  Fails with 'Nothing' if an empty list is provided
-  as an argument.
--}
-tryFoldr1 :: (a -> a -> a) -> [a] -> Maybe a
-tryFoldr1 _ [] = Nothing
-tryFoldr1 _ [x] = Just x
+-- | A guarded version of 'foldr1'.
+tryFoldr1 :: MonadThrow m => (a -> a -> a) -> [a] -> m a
+tryFoldr1 _ [] = fail' "tryFoldr1"
+tryFoldr1 _ [x] = return x
 tryFoldr1 f (x:xs) = liftM (f x) $ tryFoldr1 f xs
 
--- | An alias to 'tryFoldr1' for HOL users more familiar with this name.
-endItlist :: (a -> a -> a) -> [a] -> Maybe a
-endItlist = tryFoldr1
-
-{-| 
-  The monadic version of 'foldr1'.  Fails with 'mzero' if an empty list is
-  provided as an argument.
--}
+-- | A version of 'foldr1' that accepts monadic functions.
 foldr1M :: MonadThrow m => (a -> a -> m a) -> [a] -> m a
-foldr1M _ [] = throwM $! HOLErrorMsg "foldr1M"
+foldr1M _ [] = fail' "foldr1M"
 foldr1M _ [x] = return x
 foldr1M f (h:t) = f h =<< foldr1M f t
 
-{-| 
-  A guarded version of a right, list fold for functions of arity 2.
--}
-foldr2 :: (a -> b -> c -> c) -> c -> [a] -> [b] -> Maybe c
-foldr2 _ b [] [] = Just b
-foldr2 f b (x:xs) (y:ys) =
-    do b' <- foldr2 f b xs ys
-       return $! f x y b'
-foldr2 _ _ _ _ = Nothing
+-- | A guarded version of a right, list fold for functions of arity 2.
+foldr2 :: MonadThrow m => (a -> b -> c -> c) -> c -> [a] -> [b] -> m c
+foldr2 _ b [] [] = return b
+foldr2 f b (x:xs) (y:ys) = liftM (f x y) $ foldr2 f b xs ys
+foldr2 _ _ _ _ = fail' "foldr2"
 
-{-|
-  An alias to 'foldr2' for HOL users more familiar with this name.  Note that
-  the order of the two list arguments and the base case argument is flipped.
--}
-{-# INLINE itlist2 #-}
-itlist2 :: (a -> b -> c -> c) -> [a] -> [b] -> c -> Maybe c
-itlist2 f xs ys b = foldr2 f b xs ys
-
-{-|
-  The monadic version of 'foldr2'.  Fails with 'mzero' if the two lists are
-  of different lengths.
--}
+-- | A version of 'foldr2' that accepts monadic functions.
 foldr2M :: MonadThrow m => (a -> b -> c -> m c) -> c -> [a] -> [b] -> m c
 foldr2M _ b [] [] = return b
 foldr2M f b (h1:t1) (h2:t2) = f h1 h2 =<< foldr2M f b t1 t2
-foldr2M _ _ _ _ = throwM $! HOLErrorMsg "foldr2M"
+foldr2M _ _ _ _ = fail' "foldr2M"
 
-{-|
-  A safe version of a left, list fold for functions of arity 2.  Fails with
-  'Nothing' if the two lists are of different lengths.
--}
-foldl2 :: (c -> a -> b -> c) -> c -> [a] -> [b] -> Maybe c
-foldl2 _ b [] [] = Just b
+-- | A guarded version of a left, list fold for functions of arity 2.
+foldl2 :: MonadThrow m => (c -> a -> b -> c) -> c -> [a] -> [b] -> m c
+foldl2 _ b [] [] = return b
 foldl2 f b (x:xs) (y:ys) =
   foldl2 f (f b x y) xs ys 
-foldl2 _ _ _ _ = Nothing
+foldl2 _ _ _ _ = fail' "foldl2"
 
-{-|
-  An alias to 'foldl2' for HOL users more familiar with this name.  Note that
-  the order of the two list arguments and base case argument is flipped, as is
-  the order of the arguments to the provided function.
--}
-revItlist2 :: (a -> b -> c -> c) -> [a] -> [b] -> c -> Maybe c
-revItlist2 f xs ys b = foldl2 (\ z x y -> f x y z) b xs ys
-
-{-|
-  The monadic version of 'foldl2'.  Fails with 'mzero' if the two lists are
-  of different lengths.
--}
-foldl2M :: MonadCatch m => (c -> a -> b -> m c) -> c -> [a] -> [b] -> m c
+-- | A version of `foldl2` that accepts monadic functions.
+foldl2M :: MonadThrow m => (c -> a -> b -> m c) -> c -> [a] -> [b] -> m c
 foldl2M _ b [] [] = return b
-foldl2M f b (h1:t1) (h2:t2) =
+foldl2M f b (h1:t1) (h2:t2) = 
     do b' <- f b h1 h2
        foldl2M f b' t1 t2
-foldl2M _ _ _ _ = throwM $! HOLErrorMsg "foldl2M"
+foldl2M _ _ _ _ = fail' "foldl2M"
 
 -- sorting and merging of lists
 
@@ -750,13 +597,8 @@ mergesort ord l = mergepairs [] $ map (: []) l
   @x1 \`f\` x2 \`f\` b@ calling this function with a destructor for @f@ will
   produce the result @([x1, x2], b)@.
 -}
-splitList :: (b -> Maybe (a, b)) -> b -> ([a], b)
-splitList f x = 
-    case f x of
-      Just (l, r) -> 
-          let (ls, res) = splitList f r in
-            (l:ls, res)
-      Nothing -> ([], x)
+splitList :: (b -> Catch (a, b)) -> b -> ([a], b)
+splitList f = try' . splitListM f
 
 -- | The monadic version of 'splitList'.
 splitListM :: MonadCatch m => (b -> m (a, b)) -> b -> m ([a], b)
@@ -773,13 +615,8 @@ splitListM f x =
   @x1 \`f\` x2 \`f\` b@ calling this function with a destructor for @f@ will
   produce the result @(f, [x1, x2 \`f\` b])@.
 -}
-revSplitList :: forall a b. (a -> Maybe (a, b)) -> a -> (a, [b])
-revSplitList f = recSplit []
-  where recSplit :: [b] -> a -> (a, [b])
-        recSplit ls y = 
-            case f y of
-              Just (l, r) -> recSplit (r:ls) l
-              Nothing -> (y, ls)
+revSplitList :: (a -> Catch (a, b)) -> a -> (a, [b])
+revSplitList f = try' . revSplitListM f
 
 -- | The monadic version of 'revSplitList'.
 revSplitListM :: forall m a b. MonadCatch m => (a -> m (a, b)) 
@@ -800,19 +637,11 @@ revSplitListM f = rsplist []
   a list @l@ will produce the result @([x1 .. xk], f x(k+1) ...(f xn b))@ where 
   @k@ is the length of list @l@.
 -}
-nsplit :: (a -> Maybe (a, a)) -> [b] -> a -> Maybe ([a], a)
+nsplit :: Monad m => (a -> m (a, a)) -> [b] -> a -> m ([a], a)
 nsplit _ [] x = return ([], x)
 nsplit dest (_:cs) x =
     do (l, r) <- dest x
        (ll, y) <- nsplit dest cs r
-       return (l:ll, y)
-
--- | The monadic version of 'nsplit'.
-nsplitM :: Monad m => (b -> m (b, b)) -> [c] -> b -> m ([b], b)
-nsplitM _ [] x = return ([], x)
-nsplitM dest (_:n) x = 
-    do (l, r) <- dest x
-       (ll, y) <- nsplitM dest n r
        return (l:ll, y)
 
 {-|
@@ -822,13 +651,8 @@ nsplitM dest (_:n) x =
   @x1 \`f\` x2 \`f\` x3@ calling this function with a destructor for @f@ will
   produce the result @[x1, x2, x3]@.
 -}
-stripList :: forall a. (a -> Maybe (a, a)) -> a -> [a]
-stripList dest x = strip x []
-  where strip :: a -> [a] -> [a]
-        strip x' acc =
-            case dest x' of
-              Just (l, r) -> strip l $ strip r acc
-              Nothing -> x' : acc
+stripList :: (a -> Catch (a, a)) -> a -> [a]
+stripList dest = try' . stripListM dest
 
 -- | The monadic version of 'stripList'.
 stripListM :: forall m a. MonadCatch m => (a -> m (a, a)) -> a -> m [a]
@@ -842,20 +666,12 @@ stripListM dest x = strip x []
 
 -- miscellaneous list methods
 
--- | An alias to 'all' for HOL users who are more familiar with this name.
-forall :: (a -> Bool) -> [a] -> Bool
-forall = all
-
 {-| 
   A version of 'all' for predicates of arity 2.  Iterates down two lists
   simultaneously with 'map2', using 'and' to combine the results.
 -}
-forall2 :: (a -> b -> Bool) -> [a] -> [b] -> Maybe Bool
-forall2 f xs = liftM and . map2 f xs
-
--- | An alias to 'any' for HOL users who are more familiar with this name.
-exists :: (a -> Bool) -> [a] -> Bool
-exists = any
+all2 :: MonadThrow m => (a -> b -> Bool) -> [a] -> [b] -> m Bool
+all2 f xs = liftM and . map2 f xs
 
 {-| 
   Separates a list of elements using a predicate.  A re-export of 'L.partition'.
@@ -863,14 +679,11 @@ exists = any
 partition :: (a -> Bool) -> [a] -> ([a], [a])
 partition = L.partition
 
--- | Filter's a list of items using a `Maybe` predicate.
-mapFilter :: (a -> Maybe b) -> [a] -> [b]
-mapFilter = Maybe.mapMaybe
+-- | Filter's a list of items using a `Catch` predicate.
+mapFilter :: (a -> Catch b) -> [a] -> [b]
+mapFilter f = try' . mapFilterM f
 
-{-| 
-  The monadic version of 'mapFilter'.  The '(<|>)' operator is used for 
-  branching.
--}
+-- | The monadic version of 'mapFilter'.
 mapFilterM :: MonadCatch m => (a -> m b) -> [a] -> m [b]
 mapFilterM _ [] = return []
 mapFilterM f (x:xs) =
@@ -879,16 +692,15 @@ mapFilterM f (x:xs) =
            return (x':xs'))
          <|> return xs'
 
--- | A re-export of 'L.find'.
-find :: (a -> Bool) -> [a] -> Maybe a
-find = L.find
+-- | A guarded re-export of 'L.find'.
+find :: MonadThrow m => (a -> Bool) -> [a] -> m a
+find f = maybeToFail "find" . L.find f
 
 {-| 
-  The monadic version of 'find'.  Fails if the monadic predicate does.  Also 
-  fails with 'mzero' if an empty list is provided.
+  The monadic version of 'find'.  Fails if the monadic predicate does.
 -}
 findM :: MonadCatch m => (a -> m Bool) -> [a] -> m a
-findM _ [] = throwM $! HOLErrorMsg "findM"
+findM _ [] = fail' "findM"
 findM f (x:xs) =
     do b <- f x
        if b
@@ -902,12 +714,8 @@ findM f (x:xs) =
   Fails when called on an empty list. 
 -}
 tryFind :: (MonadCatch m, MonadThrow m) => (a -> m b) -> [a] -> m b
-tryFind _ [] = throwM $! HOLErrorMsg "tryFind"
+tryFind _ [] = fail' "tryFind"
 tryFind f (x:xs) = f x <|> tryFind f xs
-
--- | An alias to 'concat' for HOL users who are more familiar with this name.
-flat :: [[a]] -> [a]
-flat = concat
 
 {-| 
   Drops elements from the end of a list while a predicate is true.  A re-export
@@ -920,49 +728,35 @@ dropWhileEnd = L.dropWhileEnd
   Separates the first element of a list that satisfies a predicate.  Fails with
   'Nothing' if no such element is found.
 -}
-remove :: (a -> Bool) -> [a] -> Maybe (a, [a])
-remove _ [] = Nothing
+remove :: MonadThrow m => (a -> Bool) -> [a] -> m (a, [a])
+remove _ [] = fail' "remove"
 remove p (h:t)
-  | p h = Just (h, t)
+  | p h = return (h, t)
   | otherwise =
       do (y, n) <- remove p t
          return (y, h:n)
 
 {-|
-  A safe version of 'splitAt'.   Fails with 'Nothing' if a split is attempted
-  at an index that doesn't exist.
+  A guarded version of 'splitAt'.   
+  Fails if a split is attempted at an index that doesn't exist.
 -}
-trySplitAt :: Int -> [a] -> Maybe ([a], [a])
+trySplitAt :: MonadThrow m => Int -> [a] -> m ([a], [a])
 trySplitAt n l
-    | n < 0 = Nothing
-    | n == 0 = Just ([], l)
+    | n < 0 = fail' "trySplitAt"
+    | n == 0 = return ([], l)
     | otherwise = 
         case l of
-          [] -> Nothing
+          [] -> fail' "trySplitAt"
           (x:xs) -> do (m, l') <- trySplitAt (n - 1) xs
                        return (x:m, l')
 
--- | An alias to 'trySplitAt' for HOL users more familiar with this name
-chopList :: Int -> [a] -> Maybe ([a], [a])
-chopList = trySplitAt
+-- | Returns the first index where an element appears in list.
+index :: (MonadThrow m, Eq a) => a -> [a] -> m Int
+index x = maybeToFail "index" . L.elemIndex x
 
-{-|
-  Returns the first index where an element appears in list.  Fails with 
-  'Nothing' if no such element is found.  A re-export of 'L.elemIndex'.
--}
-elemIndex :: Eq a => a -> [a] -> Maybe Int
-elemIndex = L.elemIndex
-
--- | An alias to 'elemIndex' for HOL users more familiar with this name.
-index :: Eq a => a -> [a] -> Maybe Int
-index = elemIndex
-
-{-|
-  Drops the given prefix from a list.  Fails with 'Nothing' if there is no such
-  prefix.  A re-export of 'L.stripPrefix'.
--}
-stripPrefix :: Eq a => [a] -> [a] -> Maybe [a]
-stripPrefix = L.stripPrefix
+-- | A guarded versino of 'L.stripPrefix'.
+stripPrefix :: (MonadThrow m, Eq a) => [a] -> [a] -> m [a]
+stripPrefix xs = maybeToFail "stripPrefix" . L.stripPrefix xs
 
 -- | Removes adjacent, equal elements from a list.
 uniq :: Eq a => [a] -> [a]
@@ -976,18 +770,14 @@ uniq l = l
   argument. For example:
   @shareOut [[1, 2], [3], [4, 5]] \"abcde\" === [\"ab\", \"c\", \"de\"]@
 -}
-shareOut :: [[a]] -> [b] -> Maybe [[b]]
-shareOut [] _ = Just []
+shareOut :: MonadThrow m => [[a]] -> [b] -> m [[b]]
+shareOut [] _ = return []
 shareOut (p:ps) bs = 
-    do (l, r) <- chopList (length p) bs
+    do (l, r) <- trySplitAt (length p) bs
        ls <- shareOut ps r
        return (l : ls)
 
 -- set operations on lists
--- | An alias to 'elem' for HOL users who are more familiar with this name.
-mem :: Eq a => a -> [a] -> Bool
-mem = elem
-
 {-|  
   Inserts an item into a list if it would be a unique element.
 
@@ -1145,11 +935,11 @@ denominator = R.denominator
 
   * Any other prefix causes the number to be read as a decimal value
 -}
-numOfString :: forall a. (Eq a, Num a) => String -> Maybe a
+numOfString :: forall m a. (MonadThrow m, Eq a, Num a) => String -> m a
 numOfString s =
     case res of
-      [(x, "")] -> Just x
-      _ -> Nothing
+      [(x, "")] -> return x
+      _ -> fail' "numOfString"
    where res :: [(a, String)]
          res = case s of
                  ('0':'x':s') -> readHex s'
@@ -1229,7 +1019,7 @@ applyd (Leaf h l) d x
 
 -- | Guarded application for 'Func' trees.
 apply :: (MonadThrow m, Hashable a, Ord a) => Func a b -> a -> m b
-apply f = applyd f (\_ -> throwM $! HOLErrorMsg "apply")
+apply f = applyd f (\_ -> fail' "apply")
 
 -- | Application for 'Func' trees with a default value.
 tryApplyd :: (Hashable a, Ord a) => Func a b -> a -> b -> b
@@ -1378,8 +1168,8 @@ combine op z t1@(Leaf h1 l1) t2@(Leaf h2 l2)
 x |=> y = (x |-> y) funcEmpty
 
 -- | Selects an arbitrary element from a 'Func' tree.
-choose :: Func a b -> Maybe (a, b)
-choose Empty = Nothing
+choose :: MonadThrow m => Func a b -> m (a, b)
+choose Empty = fail' "choose"
 choose (Leaf _ l) = tryHead l
 choose (Branch _ _ t1 _) = choose t1
 
@@ -1400,9 +1190,9 @@ mapUnion = Map.union
 mapDelete :: Ord k => k -> Map k a -> Map k a
 mapDelete = Map.delete
 
--- | A re-export of 'Map.lookup'.
-mapLookup :: Ord a => a -> Map a b -> Maybe b
-mapLookup = Map.lookup
+-- | A guarded re-export of 'Map.lookup'.
+mapAssoc :: (MonadThrow m, Ord a) => a -> Map a b -> m b
+mapAssoc x = maybeToFail "mapAssoc" . Map.lookup x
 
 -- | A re-export of 'Map.elems'.
 mapElems :: Map k a -> [a]
@@ -1425,12 +1215,12 @@ mapFoldrWithKey :: (k -> a -> b -> b) -> b -> Map k a -> b
 mapFoldrWithKey = Map.foldrWithKey
 
 -- | A version of 'remove' for 'Map's based on 'Map.updateLookupWithKey'.
-mapRemove :: Ord k => k -> Map k a -> Maybe (a, Map k a)
+mapRemove :: (MonadThrow m, Ord k) => k -> Map k a -> m (a, Map k a)
 mapRemove x m = 
     let (child, map') = Map.updateLookupWithKey (\ _ _ -> Nothing) x m in
       case child of
-        Nothing -> Nothing
-        Just x' -> Just (x', map')
+        Nothing -> fail' "mapRemove"
+        Just x' -> return (x', map')
 
 -- | A re-export of 'Map.toAscList'.
 mapToAscList :: Map k a -> [(k, a)]

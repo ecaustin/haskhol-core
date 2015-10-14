@@ -98,7 +98,7 @@ getTypeDefinitions  =
 getTypeDefinition :: Text -> Query TypeDefinitions (Maybe (HOLThm, HOLThm))
 getTypeDefinition lbl =
     do (TypeDefinitions m) <- ask
-       return $! mapLookup lbl m 
+       return $! mapAssoc lbl m 
 
 makeAcidic ''TypeDefinitions 
     ['insertTypeDefinition, 'getTypeDefinitions, 'getTypeDefinition]
@@ -138,7 +138,7 @@ getAxioms =
 getAxiom' :: Text -> Query TheAxioms (Maybe HOLThm)
 getAxiom' lbl =
     do TheAxioms m <- ask
-       return $! mapLookup lbl m
+       return $! mapAssoc lbl m
 
 makeAcidic ''TheAxioms ['insertAxiom, 'getAxioms, 'getAxiom']
 
@@ -161,7 +161,7 @@ getCoreDefinitions =
 getCoreDefinition :: Text -> Query TheCoreDefinitions (Maybe HOLThm)
 getCoreDefinition name =
     do (TheCoreDefinitions defs) <- ask
-       return $! name `mapLookup` defs
+       return $! name `mapAssoc` defs
 
 makeAcidic ''TheCoreDefinitions 
     ['insertCoreDefinition, 'getCoreDefinitions, 'getCoreDefinition]
@@ -198,10 +198,8 @@ tyDefinitions =
 getTypeArity :: Text -> HOL cls thry Int
 getTypeArity name =
     do tys <- types
-       case liftM (snd . destTypeOp) $ mapLookup name tys of
-         Nothing -> throwM $! HOLMiscError name
-                      "getTypeArity: name has not been defined."
-         Just res -> return res
+       (liftM (snd . destTypeOp) $ mapAssoc name tys) <?>
+         "getTypeArity: name has not been defined."
 
 {- 
   Primitive type constant construction function.  Used by newType and 
@@ -238,10 +236,10 @@ newType name arity =
 mkType :: Text -> [HOLType] -> HOL cls thry HOLType
 mkType name args =
     do consts <- types
-       case mapLookup name consts of
-         Just tyOp -> tyApp tyOp args <?> 
+       case runCatch $ mapAssoc name consts of
+         Right tyOp -> tyApp tyOp args <?> 
                         "mkType: type constructor application failed"
-         Nothing -> 
+         Left{} -> 
            {- This seemed to be the easiest way to supress superfluous warnings
               when parsing type operators. -}
            do name' <- if textHead name == '_'
@@ -285,10 +283,8 @@ constants =
 getConstType :: Text -> HOL cls thry HOLType
 getConstType name =
     do consts <- constants
-       case liftM typeOf $ mapLookup name consts of
-         Nothing -> throwM $! HOLMiscError name 
-                      "getConstType: not a constant name"
-         Just ty -> return ty
+       (liftM typeOf $ mapAssoc name consts) <?> 
+         "getConstType: not a constant name"
 
 {-
   Primitive term constant construction function.  Used by newConstant,
@@ -328,9 +324,8 @@ newConstant name ty =
 mkConst :: TypeSubst l r => Text -> [(l, r)] -> HOL cls thry HOLTerm
 mkConst name tyenv =
     do consts <- constants
-       case mapLookup name consts of
-         Nothing -> throwM $! HOLMiscError name "mkConst: not a constant name"
-         Just tm -> instConst tm tyenv <?> "mkConst: instantiation failed"
+       tm <- mapAssoc name consts <?> "mkConst: not a constant name"
+       instConst tm tyenv <?> "mkConst: instantiation failed"
 
 {-| 
   A version of 'mkConst' that accepts a triplet of type substitition 
@@ -339,10 +334,8 @@ mkConst name tyenv =
 mkConstFull :: Text -> SubstTrip -> HOL cls thry HOLTerm
 mkConstFull name pat =
     do consts <- constants
-       case mapLookup name consts of
-         Nothing -> throwM $! HOLMiscError name 
-                      "mkConstFull: not a constant name"
-         Just tm -> instConstFull tm pat <?> "mkConstFull: instantiation failed"
+       tm <- mapAssoc name consts <?>  "mkConstFull: not a constant name"
+       instConstFull tm pat <?> "mkConstFull: instantiation failed"
          
 
 -- State for Axioms     
