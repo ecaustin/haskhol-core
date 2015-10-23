@@ -383,10 +383,12 @@ newAxiom name tm =
 -- | Retrieves an axiom by label from the theory context.
 getAxiom :: Text -> HOL cls thry HOLThm
 getAxiom lbl =
-    (do acid <- openLocalStateHOL (TheAxioms mapEmpty)
-        (Just qth) <- queryHOL acid (GetAxiom' lbl)
-        closeAcidStateHOL acid
-        return qth) <?> "getAxiom: axiom " ++ show lbl ++ " not found."
+    do acid <- openLocalStateHOL (TheAxioms mapEmpty)
+       qth <- queryHOL acid (GetAxiom' lbl)
+       closeAcidStateHOL acid
+       case qth of
+         Just res -> return res
+         _ -> fail $ "getAxiom: axiom " ++ show lbl ++ " not found."
 
 -- State for Definitions
 {-|
@@ -427,11 +429,13 @@ newBasicDefinition lbl tm =
 -- | Retrieves a basic term definition by label from the theory context.
 getBasicDefinition :: Text -> HOL cls thry HOLThm
 getBasicDefinition lbl =
-    (do acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
-        (Just qth) <- queryHOL acid (GetCoreDefinition lbl)
-        closeAcidStateHOL acid
-        return qth) <?> "getBasicDefinition: definition for " ++ show lbl ++
-                        " not found."
+    do acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
+       qth <- queryHOL acid (GetCoreDefinition lbl)
+       closeAcidStateHOL acid
+       case qth of
+         Just res -> return res
+         _ -> fail $ "getBasicDefinition: definition for " ++ show lbl ++
+                     " not found."
 
 {-|
   Introduces a new type constant, and two associated term constants, into the 
@@ -474,11 +478,13 @@ newBasicTypeDefinition tyname absname repname dth =
 -- | Retrieves a basic type definition by label from the theory context.
 getBasicTypeDefinition :: Text -> HOL cls thry (HOLThm, HOLThm)
 getBasicTypeDefinition lbl =
-    (do acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
-        (Just qth) <- queryHOL acid (GetTypeDefinition lbl)
-        closeAcidStateHOL acid
-        return qth) <?> "getBasicTypeDefinition: definition for " ++ 
-                        show lbl ++ " not found."
+    do acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
+       qth <- queryHOL acid (GetTypeDefinition lbl)
+       closeAcidStateHOL acid
+       case qth of
+         Just res -> return res
+         _ -> fail $ "getBasicTypeDefinition: definition for " ++ 
+                     show lbl ++ " not found."
 
 -- Primitive Debugging Functions
 {-| 

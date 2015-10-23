@@ -75,8 +75,10 @@ module HaskHOL.Core.Basics
     , destGAbs
     , destBinder
     , pattern Bind
+    , pattern Bind'
     , destTyBinder
     , pattern TyBind
+    , pattern TyBind'
     , mkGAbs
     , mkBinder
     , mkTyBinder
@@ -822,6 +824,9 @@ destBinder _ tm = throwM $! HOLTermError tm
 -- | The pattern synonym equivalent of 'destBinder'.
 pattern Bind s bv tm <- Comb (Const s _) (Abs bv tm)
 
+-- | A version of 'Bind' that returns the body abstraction in its entirety.
+pattern Bind' s tm <- Comb (Const s _) tm
+
 {-|
   Destructs a type abstraction of specified binder name into its bound type
   variable and its body term.  Fails with 'Nothing' if the provided term is not
@@ -837,6 +842,9 @@ destTyBinder _ tm = throwM $! HOLTermError tm
 
 -- | The pattern synonym equivalent of 'destTyBinder'.
 pattern TyBind s ty tm <- Comb (Const s _) (TyAbs ty tm)
+
+-- | A version of 'TyBind' that returns the body abstraction in its entirety.
+pattern TyBind' s tm <- Comb (Const s _) tm
 
 {-|
   Constructor for generalized abstractions.  Generalized abstractions extend

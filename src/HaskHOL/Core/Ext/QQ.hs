@@ -20,7 +20,7 @@
 module HaskHOL.Core.Ext.QQ
     ( baseQuoter
     , baseQQ
-    , str
+    , txt
     , liftParseContext
     ) where
 
@@ -99,8 +99,8 @@ baseQQ = baseQuoter ctxtBase initParseContext
   white space and automatically escape special characters.  It is typically used
   in conjunction with 'toHTm' directly or indirectly.
 -}
-str :: QuasiQuoter
-str = QuasiQuoter quoteStrExp nothing nothing nothing
+txt :: QuasiQuoter
+txt = QuasiQuoter quoteStrExp nothing nothing nothing
     where quoteStrExp x = [| textStrip $ pack $(litE $ StringL x) |]
           nothing _ = fail "quoting here not supported"
 
