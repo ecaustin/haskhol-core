@@ -71,7 +71,9 @@ module HaskHOL.Core.Lib
     , allpairs
       -- * Methods for List Iteration
     , foldrM
+    , itlistM
     , foldlM
+    , revItlistM
     , tryFoldr1
     , foldr1M
     , foldr2
@@ -500,9 +502,17 @@ allpairs f (h:t) l2 = foldr (\ x a -> f h x : a) (allpairs f t l2) l2
 foldrM :: (F.Foldable t, Monad m) => (a -> b -> m b) -> b -> t a -> m b
 foldrM = F.foldrM
 
+-- | A version of 'foldrM' with its arguments flipped.
+itlistM :: (F.Foldable t, Monad m) => (a -> b -> m b) -> t a -> b -> m b
+itlistM f = flip (F.foldrM f)
+
 -- | The monadic version of 'foldl'.  A re-export of 'F.foldlM'.
 foldlM :: (F.Foldable t, Monad m) => (a -> b -> m a) -> a -> t b -> m a
 foldlM = F.foldlM
+
+-- | A version of 'foldlM' with its arguments flipped.
+revItlistM :: (F.Foldable t, Monad m) => (b -> a -> m a) -> t b -> a -> m a
+revItlistM f = flip (F.foldlM (flip f))
 
 -- | A guarded version of 'foldr1'.
 tryFoldr1 :: MonadThrow m => (a -> a -> a) -> [a] -> m a
@@ -1313,6 +1323,8 @@ class Lang a where
     _FAIL :: String -> a
     -- | An instance of '_FAIL' with a fixed failure string.
     _NO :: a
+    _NO = _FAIL "_NO"
+
     -- | A primitive language operation that always succeeds.
     _ALL :: a
     {-| 
@@ -1320,8 +1332,12 @@ class Lang a where
       equivalent of the '<|>' operator.
     -}
     _ORELSE :: a -> a -> a
+
     -- | A language combinator that performs the first operation in a list.
     _FIRST :: [a] -> a
+    _FIRST [] = _FAIL "_FIRST: empty list"
+    _FIRST xs = foldr1 _ORELSE xs
+
     {-| 
       A language combinator that fails if the wrapped operation doesn't invoke
       some change, i.e. a tactic fails to change the goal state.
@@ -1333,6 +1349,8 @@ class Lang a where
       operator.
     -}
     _TRY :: a -> a
+    _TRY x = x `_ORELSE` _ALL
+
     {-|
       A language combinator that annotates the wrapped operation with a provided
       'String'.  The language equivalent of 'note''.
@@ -1345,7 +1363,7 @@ class Lang a where
   on sequencing.  See the note at the top of this section for more details as
   to why these are separated on their own.
 -}
-class LangSeq a where
+class Lang a => LangSeq a where
     -- | A language combinator that sequences operations.
     _THEN :: a -> a -> a
     {-| 
@@ -1353,8 +1371,10 @@ class LangSeq a where
       failure.
     -}
     _REPEAT :: a -> a
+    _REPEAT x = (x `_THEN` _REPEAT x) `_ORELSE` x
     {-| 
       A language combinator that performs every operation in a list  
       sequentially.
     -}
     _EVERY :: [a] -> a
+    _EVERY = foldr _THEN _ALL

@@ -35,6 +35,9 @@ module HaskHOL.Core.Printer
     , getUnspacedBinops
     , getPrebrokenBinops
       -- * Printing in the 'HOL' Monad
+    , PrintM
+    , getPrec
+    , setPrec
     , ShowHOL(..)
     , printContext
     , initPrintContext

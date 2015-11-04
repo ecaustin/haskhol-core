@@ -72,8 +72,6 @@ instance {-# OVERLAPPING #-} (cls1 ~ cls2, thry1 ~ thry2) =>
          HOLTypeRep (HOL cls thry HOLType) cls thry where
     toHTy = id
 
-
-
 -- Terms
 {-|
   The 'HOLTermRep' class provides a conversion from an alternative 

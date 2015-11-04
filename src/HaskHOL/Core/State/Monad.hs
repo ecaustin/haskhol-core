@@ -70,6 +70,7 @@ module HaskHOL.Core.State.Monad
     , cacheProof
     , unsafeCacheProof
     , cacheProofs
+    , getProof
       -- * Re-export for Extensible Exceptions
     , Exception
     ) where
@@ -731,19 +732,23 @@ newFlag flag val =
        return [ty, cls]
 
 -- Proof Caching
+getProofInternal :: Text -> IORef (Hash.HashMap Text HOLThm) -> IO HOLThm 
+                 -> IO HOLThm
+getProofInternal lbl ref job =
+    do hm <- readIORef ref
+       case Hash.lookup lbl hm of
+         Just th -> return th
+         Nothing -> job
+
 cacheProofInternal :: Text -> IORef (Hash.HashMap Text HOLThm) -> String 
                    -> [String] -> HOL Proof thry HOLThm -> IO HOLThm
 cacheProofInternal lbl ref tp mods prf =
-    do hm <- readIORef ref
-       case Hash.lookup lbl hm of
-         Just th -> 
-             return th
-         Nothing ->
-           let lbl' = unpack lbl in
-             do putStrLn ("proving: " ++ lbl')
-                th <- runHOLUnsafe prf ref tp mods
-                putStrLn (lbl' ++ " proved.")
-                atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
+    getProofInternal lbl ref $
+      let lbl' = unpack lbl in
+        do putStrLn ("proving: " ++ lbl')
+           th <- runHOLUnsafe prf ref tp mods
+           putStrLn (lbl' ++ " proved.")
+           atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
 
 unsafeCacheProof :: Text -> HOL Proof thry HOLThm -> HOL cls thry HOLThm
 unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
@@ -784,6 +789,12 @@ cacheProof :: PolyTheory thry thry' => Text -> TheoryPath thry
 cacheProof lbl tp prf = HOL $ \ ref _ mods ->
     cacheProofInternal lbl ref (newTP tp) mods prf
 
+getProof :: Text -> HOL cls thry HOLThm
+getProof lbl = HOL $ \ ref _ _ ->
+    getProofInternal lbl ref (fail $ "getProof: proof " ++ unpack lbl ++ 
+                                     " not found.")
+
+
 {-|
   This is a version of 'cacheProof' that handles proof computations that return
   multiple theorems.  Essentially, it maps 'cacheProof' over
@@ -801,27 +812,24 @@ cacheProofs :: forall cls thry thry'. PolyTheory thry thry' => [Text]
 cacheProofs lbls tp prf = map cacheProofs' lbls
   where cacheProofs' :: Text -> HOL cls thry' HOLThm
         cacheProofs' lbl = HOL $ \ ref _ mods ->
-            do hm <- readIORef ref
-               case Hash.lookup lbl hm of
-                 Just th -> 
-                   return th
-                 Nothing -> 
-                   let qths = mapFilter (maybeToFail "cacheProofs" . 
-                                         (`Hash.lookup` hm)) lbls in
-                     do unless (null qths) . fail $
-                           "cacheProofs: some provided labels clash with " ++
-                           "existing theorems."
-                        let lbls' = unpack $ T.unwords lbls
-                        putStrLn ("proving: " ++ lbls')
-                        ths <- runHOLUnsafe prf ref (newTP tp) mods
-                        putStrLn (lbls' ++ " proved.")
-                        when (length lbls /= length ths) . fail $
-                           "cacheProofs: number of labels does not match " ++
-                           "number of theorems."
-                        let hm' = Hash.fromList $ zip lbls ths
-                        atomicModifyIORef' ref (\ x -> 
-                          let hm'' = Hash.union x hm'
-                              Just th = Hash.lookup lbl hm'' in (hm'', th))
+            getProofInternal lbl ref $
+              do hm <- readIORef ref
+                 let qths = mapFilter (maybeToFail "cacheProofs" . 
+                                       (`Hash.lookup` hm)) lbls
+                 unless (null qths) . fail $
+                   "cacheProofs: some provided labels clash with " ++
+                   "existing theorems."
+                 let lbls' = unpack $ T.unwords lbls
+                 putStrLn ("proving: " ++ lbls')
+                 ths <- runHOLUnsafe prf ref (newTP tp) mods
+                 putStrLn (lbls' ++ " proved.")
+                 when (length lbls /= length ths) . fail $
+                   "cacheProofs: number of labels does not match " ++
+                   "number of theorems."
+                 let hm' = Hash.fromList $ zip lbls ths
+                 atomicModifyIORef' ref (\ x -> 
+                   let hm'' = Hash.union x hm'
+                       Just th = Hash.lookup lbl hm'' in (hm'', th))
 
 {-# NOINLINE counter #-}
 counter :: IORef Int
