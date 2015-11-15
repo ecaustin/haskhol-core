@@ -1,4 +1,16 @@
 {-# LANGUAGE TypeFamilies #-}
+{-|
+  Module:    HaskHOL.Core.Parser.Prims
+  Copyright: (c) Evan Austin 2015
+  LICENSE:   BSD3
+
+  Maintainer:  e.c.austin@gmail.com
+  Stability:   unstable
+  Portability: unknown
+
+  This module implements the primitive data types and methods for HaskHOL's
+  parser.
+-}
 module HaskHOL.Core.Parser.Prims where
 
 import HaskHOL.Core.Lib
@@ -65,6 +77,7 @@ getParseContext = ask
 
 makeAcidic ''ParseContext ['putParseContext, 'getParseContext]
 
+-- | The initial parser context.
 initParseContext :: ParseContext
 initParseContext = ParseContext 
     initTypeConstants initTermConstants mapEmpty [] 
@@ -79,6 +92,7 @@ initTyBinderOps = ["\\\\"]
 initInfixOps :: [(Text, (Int, Text))]
 initInfixOps = [("=", (12, "right"))]
 
+-- | Retrieves the current parser context.
 parseContext :: HOL cls thry ParseContext
 parseContext =
     do acid <- openLocalStateHOL initParseContext

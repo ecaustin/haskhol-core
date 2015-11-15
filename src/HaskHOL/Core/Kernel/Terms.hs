@@ -1,10 +1,10 @@
 {-# LANGUAGE MultiParamTypeClasses, PatternSynonyms #-}
 {-|
   Module:    HaskHOL.Core.Kernel.Terms
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -639,6 +639,7 @@ destTyComb :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLType)
 destTyComb (TyCombIn tm ty) = return (tm, ty)
 destTyComb tm = throwM $! HOLTermError tm "destTyComb"
 
+-- | The initial term constants.
 initTermConstants :: Map Text HOLTerm
 initTermConstants = mapFromList [("=", tmEq tyA)]
 

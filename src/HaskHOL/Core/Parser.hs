@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-|
   Module:    HaskHOL.Core.Parser
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -175,9 +175,11 @@ infixes :: HOL cls thry [(Text, (Int, Text))]
 infixes = Parser.viewParseContext Parser.infixes
 
 -- Interface
+-- | Returns the current parser interface.
 getInterface :: HOL cls thry [(Text, (Text, HOLType))]
 getInterface = Parser.viewParseContext Parser.interface
 
+-- | Returns the current mapping of overloads for the parser.
 getOverloads :: HOL cls thry (Map Text HOLType)
 getOverloads = Parser.viewParseContext Parser.overloads
 

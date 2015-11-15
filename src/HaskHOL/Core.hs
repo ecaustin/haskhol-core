@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-|
   Module:    HaskHOL.Core
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -151,9 +151,17 @@ newTypeAbbrev :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
 newTypeAbbrev s = P.newTypeAbbrev s <=< toHTy
 
 -- from kernel
+{-| 
+  A redefinition of 'K.primREFL' to overload it for all valid term
+  representations as defined by 'HOLTermRep'.
+-}
 primREFL :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primREFL = liftM (K.primREFL) . toHTm
 
+{-| 
+  A redefinition of 'K.primTRANS' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primTRANS :: (HOLThmRep thm1 cls thry, HOLThmRep thm2 cls thry) 
           => thm1 -> thm2 -> HOL cls thry HOLThm
 primTRANS pthm1 pthm2 =
@@ -161,6 +169,10 @@ primTRANS pthm1 pthm2 =
        thm2 <- toHThm pthm2
        K.primTRANS thm1 thm2
 
+{-| 
+  A redefinition of 'K.primMK_COMB' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primMK_COMB :: (HOLThmRep thm1 cls thry, HOLThmRep thm2 cls thry)
             => thm1 -> thm2 -> HOL cls thry HOLThm
 primMK_COMB pthm1 pthm2 =
@@ -168,6 +180,10 @@ primMK_COMB pthm1 pthm2 =
        thm2 <- toHThm pthm2
        K.primMK_COMB thm1 thm2
 
+{-| 
+  A redefinition of 'K.primABS' to overload it for all valid term and theorem
+  representations as defined by 'HOLTermRep' and 'HOLThmRep'.
+-}
 primABS :: (HOLTermRep tm cls thry, HOLThmRep thm cls thry) 
         => tm -> thm -> HOL cls thry HOLThm  
 primABS ptm pthm =
@@ -175,12 +191,24 @@ primABS ptm pthm =
        thm <- toHThm pthm
        K.primABS tm thm
 
+{-| 
+  A redefinition of 'K.primBETA' to overload it for all valid term
+  representations as defined by 'HOLTermRep'.
+-}
 primBETA :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primBETA = K.primBETA <=< toHTm
 
+{-| 
+  A redefinition of 'K.primASSUME' to overload it for all valid term
+  representations as defined by 'HOLTermRep'.
+-}
 primASSUME :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primASSUME = K.primASSUME <=< toHTm
 
+{-| 
+  A redefinition of 'K.primEQ_MP' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primEQ_MP :: (HOLThmRep thm1 cls thry, HOLThmRep thm2 cls thry) 
           => thm1 -> thm2 -> HOL cls thry HOLThm
 primEQ_MP pthm1 pthm2 =
@@ -188,19 +216,35 @@ primEQ_MP pthm1 pthm2 =
        thm2 <- toHThm pthm2
        K.primEQ_MP thm1 thm2
 
+{-| 
+  A redefinition of 'K.primDEDUCT_ANTISYM' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primDEDUCT_ANTISYM :: (HOLThmRep thm1 cls thry, HOLThmRep thm2 cls thry) 
                    => thm1 -> thm2 -> HOL cls thry HOLThm
 primDEDUCT_ANTISYM pthm1 pthm2 =
     pure K.primDEDUCT_ANTISYM <*> toHThm pthm1 <*> toHThm pthm2
 
+{-| 
+  A redefinition of 'K.primINST_TYPE' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primINST_TYPE :: (HOLThmRep thm cls thry, Inst a b) 
               => [(a, b)] -> thm -> HOL cls thry HOLThm
 primINST_TYPE tyenv = liftM (K.primINST_TYPE tyenv) . toHThm
 
+{-| 
+  A redefinition of 'K.primINST_TYPE_FULL' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primINST_TYPE_FULL :: HOLThmRep thm cls thry 
                    => SubstTrip -> thm -> HOL cls thry HOLThm
 primINST_TYPE_FULL tyenv = liftM (K.primINST_TYPE_FULL tyenv) . toHThm
 
+{-| 
+  A redefinition of 'K.primINST' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primINST :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry, 
              HOLThmRep thm cls thry)
          => [(tm1, tm2)] -> thm -> HOL cls thry HOLThm
@@ -208,6 +252,10 @@ primINST ptmenv pthm =
     do tmenv <- mapM (toHTm `ffCombM` toHTm) ptmenv
        K.primINST tmenv =<< toHThm pthm
 
+{-| 
+  A redefinition of 'K.primTYABS' to overload it for all valid theorem
+  representations as defined by 'HOLThmRep'.
+-}
 primTYABS :: (HOLTypeRep ty cls thry, HOLThmRep thm cls thry) 
           => ty -> thm -> HOL cls thry HOLThm
 primTYABS pty pthm =
@@ -215,6 +263,10 @@ primTYABS pty pthm =
        thm <- toHThm pthm
        K.primTYABS ty thm
 
+{-| 
+  A redefinition of 'K.primTYAPP2' to overload it for all valid type and theorem
+  representations as defined by 'HOLTypeRep' and 'HOLThmRep'.
+-}
 primTYAPP2 :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry, 
                HOLThmRep thm cls thry) 
            => ty1 -> ty2 -> thm -> HOL cls thry HOLThm
@@ -224,6 +276,10 @@ primTYAPP2 pty1 pty2 pthm =
        thm <- toHThm pthm
        K.primTYAPP2 ty1 ty2 thm
 
+{-| 
+  A redefinition of 'K.primTYAPP' to overload it for all valid type and theorem
+  representations as defined by 'HOLTypeRep' and 'HOLThmRep'.
+-}
 primTYAPP :: (HOLTypeRep ty cls thry, HOLThmRep thm cls thry) 
           => ty -> thm -> HOL cls thry HOLThm
 primTYAPP pty pthm =
@@ -231,5 +287,9 @@ primTYAPP pty pthm =
        thm <- toHThm pthm
        K.primTYAPP ty thm
 
+{-| 
+  A redefinition of 'K.primTYBETA' to overload it for all valid term
+  representations as defined by 'HOLTermRep'.
+-}
 primTYBETA :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primTYBETA = K.primTYBETA <=< toHTm

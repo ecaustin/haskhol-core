@@ -1,10 +1,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Lib
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -377,16 +377,26 @@ revAssocd x xs b = tryd b $ revAssoc x xs
 -- error handling and checking
 
 infixl 3 <|>
--- | A version of the alternative operation based on 'MonadCatch'.
+-- | A version of the alternative operator based on 'MonadCatch'.
 (<|>) :: forall m a. MonadCatch m => m a -> m a -> m a
 job <|> err = job `catch` ferr
     where ferr :: SomeException -> m a
           ferr _ = err
 
 infix 0 <?>
+{-| 
+  Replaces the exception thrown by a computation with a provided 'String' 
+  message, i.e.
+  
+  > m (<?>) str = m <|> (fail' str)
+-}  
 (<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
 m <?> str = m <|> (fail' str)
 
+{-| 
+  Converts the exception thrown by a computaiton to a 'String' and prepends it
+  with a provided message.
+-}
 note :: (MonadCatch m, MonadThrow m) => String -> (m a) -> m a
 note str m =
     m `catch` (\ e -> case fromException e of
@@ -395,23 +405,35 @@ note str m =
                         _ ->
                             throwM $! HOLErrorMsg (str ++ ": " ++ show e))
 
+-- | A version of 'fail' based on 'MonadThrow' using 'HOLPrimError'.
 fail' :: MonadThrow m => String -> m a
 fail' = throwM . HOLErrorMsg
 
+-- | The 'fail'' method guarded by 'when'.
 failWhen :: (MonadCatch m, MonadThrow m) => m Bool -> String -> m ()
 failWhen m str =
     do cond <- m
        when cond $ fail' str
 
+-- | Converts a 'Maybe' value to a 'MonadThrow' value using 'fail''.
 maybeToFail :: MonadThrow m => String -> Maybe a -> m a
 maybeToFail str = maybe (fail' str) return
 
+{-| 
+  Forces the evaluation of a 'Catch' computation, relying on 'error' if it 
+  fails.
+-}
 try' :: Catch a -> a
 try' = either (\ _ -> error "try'") id . runCatch
 
+{-|
+  Forces the evaluation of a 'Catch' computation, returning a default value if
+  it fails.
+-}
 tryd :: a -> Catch a -> a
 tryd d = either (const d) id . runCatch
 
+-- | Tests if the evaluation of a 'Catch' computation succeeds or not.
 test' :: Catch a -> Bool
 test' = either (const False) (const True) . runCatch
 

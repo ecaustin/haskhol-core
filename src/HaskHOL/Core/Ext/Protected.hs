@@ -2,10 +2,10 @@
              TypeFamilies, TypeSynonymInstances #-}
 {-|
   Module:    HaskHOL.Core.Ext.Protected
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -35,7 +35,6 @@ module HaskHOL.Core.Ext.Protected
     , PThm
     , liftProtectedExp
     , liftProtected
-    , liftProtectedM
     ) where
 
 import HaskHOL.Core.Kernel
@@ -230,10 +229,3 @@ liftProtected lbl pdata =
          tysig = SigD name ty
          dec = ValD (VarP name) (NormalB pdata') []
      return [tysig, dec]
-
-liftProtectedM :: (Protected a, CtxtName thry) => String -> TheoryPath thry 
-               -> HOL Proof thry a -> Q [Dec]
-liftProtectedM lbl tp m =
-    do x <- runIO $ runHOLProof False m tp
-       let px = protect tp x
-       liftProtected lbl px

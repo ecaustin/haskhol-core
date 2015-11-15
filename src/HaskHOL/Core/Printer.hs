@@ -1,9 +1,9 @@
 {-|
   Module:    HaskHOL.Core.Printer
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -61,6 +61,10 @@ import Control.Monad.Trans.Reader
 import Text.PrettyPrint.Free
 import System.Console.Terminfo.PrettyPrint
 
+{-| 
+  The computational monad for our pretty-printer.  
+  Exposed for use in later libraries.
+-}
 type PrintM s = ReaderT (STRef s PrintState) (CatchT (ST s))
 
 data PrintState = PrintState
@@ -155,9 +159,11 @@ getPrebrokenBinops :: HOL cls thry [Text]
 getPrebrokenBinops =
     viewPrintContext prebroken
 
+-- | Returns the current precedence value from the pretty-printer's state.
 getPrec :: PrintM s Int
 getPrec = viewPrintState $ view precedence
 
+-- | Sets a new precedence value in the pretty-printer's state.
 setPrec :: Int -> PrintM s ()
 setPrec = modPrintState . set precedence
 

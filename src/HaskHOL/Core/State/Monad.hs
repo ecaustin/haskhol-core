@@ -3,10 +3,10 @@
              TypeFamilies, TypeOperators, UndecidableInstances #-}
 {-|
   Module:    HaskHOL.Core.State.Monad
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -51,8 +51,6 @@ module HaskHOL.Core.State.Monad
     , openLocalStateHOL
     , openLocalStateHOLBase
     , closeAcidStateHOL
-    , createCheckpointAndCloseHOL
-    --, cleanArchives
     , updateHOL
     , updateHOLUnsafe
     , queryHOL
@@ -461,6 +459,10 @@ ctxtBase =
     TheoryPath (ctxtName (undefined :: BaseThry)) Nothing 
       "HaskHOL.Core.State.Monad" (return ()) 
       
+{-| 
+  Returns the name of the module this splice is called from. Used in conjunction
+  with 'extendTheory'.
+-}
 thisModule' :: Q Exp
 thisModule' = 
     do (Module _ modname) <- thisModule
@@ -561,9 +563,6 @@ closeAcidStateHOL :: (SafeCopy st, Typeable st) => AcidState st
                   -> HOL cls thry ()
 closeAcidStateHOL ast = HOL $ \ _ _ _ -> closeAcidState ast
 
-createCheckpointAndCloseHOL :: (SafeCopy st, Typeable st) => AcidState st 
-                            -> HOL cls thry ()
-createCheckpointAndCloseHOL = closeAcidStateHOL
 
 {-|
   A wrapper to 'update' for the 'HOL' monad.  Note that the classification of
@@ -750,6 +749,11 @@ cacheProofInternal lbl ref tp mods prf =
            putStrLn (lbl' ++ " proved.")
            atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
 
+{-| 
+  An "unsafe" version of 'cacheProof' that uses the current working theory
+  to evaluate a proof instead of a provided theory context.  Useful for
+  cacheing proofs that are used in the construction of theories.
+-}
 unsafeCacheProof :: Text -> HOL Proof thry HOLThm -> HOL cls thry HOLThm
 unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
     cacheProofInternal lbl ref tp mods prf
@@ -760,9 +764,7 @@ unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
 
   > thmTRUTH :: BoolCtxt thry => HOL cls thry HOLThm
   > thmTRUTH = cacheProof "thmTRUTH" ctxtBool $
-  >     do tm <- toHTm [str| \p:bool. p |]
-  >        tdef <- defT
-  >        liftO . liftM1 primEQ_MP (ruleSYM tdef) $ primREFL tm
+  >   primEQ_MP (ruleSYM defT) $ primREFL [txt| \ p:bool. p |]
 
   Note that 'cacheProof' takes three arguments:
 
@@ -789,6 +791,10 @@ cacheProof :: PolyTheory thry thry' => Text -> TheoryPath thry
 cacheProof lbl tp prf = HOL $ \ ref _ mods ->
     cacheProofInternal lbl ref (newTP tp) mods prf
 
+{-| 
+  Retrieves a proof from the cache given its label.  
+  Can be useful in combination with 'cacheProofs'.
+-} 
 getProof :: Text -> HOL cls thry HOLThm
 getProof lbl = HOL $ \ ref _ _ ->
     getProofInternal lbl ref (fail $ "getProof: proof " ++ unpack lbl ++ 

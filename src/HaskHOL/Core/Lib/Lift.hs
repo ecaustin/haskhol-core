@@ -7,7 +7,7 @@
   Copyright: (c) Ian Lynagh 2006
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 

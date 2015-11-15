@@ -1,10 +1,10 @@
 {-# LANGUAGE PatternSynonyms, ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Basics
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -63,6 +63,7 @@ module HaskHOL.Core.Basics
     , isBinop
     , destBinary
     , pattern Binary
+    , pattern Binary'
     , destBinop
     , mkBinary
     , mkBinop
@@ -730,7 +731,10 @@ destBinary _ tm = throwM $! HOLTermError tm
     "destBinary: not a binary application."
 
 -- | The pattern synonym equivalent of 'destBinary'.
-pattern Binary s l r <- Comb (Comb (Const s _) l) r
+pattern Binary op l r <- Comb (Comb op l) r
+
+-- | A version of 'Binary' that matches a symbol instead of an entire operator.
+pattern Binary' s l r <- Comb (Comb (Const s _) l) r
 
 -- | A version of 'destBinary' that tests for operator terms, not strings.
 destBinop :: MonadThrow m => HOLTerm -> HOLTerm -> m (HOLTerm, HOLTerm)
@@ -972,14 +976,14 @@ destConj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destConj = destBinary "/\\"
 
 -- | The pattern synonym equivalent of 'destConj'.
-pattern l :/\ r <- Binary "/\\" l r
+pattern l :/\ r <- Binary' "/\\" l r
 
 -- | Destructor for boolean implications.
 destImp :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destImp = destBinary "==>"
 
 -- | The pattern synonym equivalent of 'destImp'.
-pattern l :==> r <- Binary "==>" l r
+pattern l :==> r <- Binary' "==>" l r
 
 -- | Destructor for universal term quantification.
 destForall :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
@@ -1000,7 +1004,7 @@ destDisj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destDisj = destBinary "\\/"
 
 -- | The pattern synonym equivalent of 'destDisj'.
-pattern l :\/ r <- Binary "\\/" l r
+pattern l :\/ r <- Binary' "\\/" l r
 
 -- | Destructor for boolean negations.
 destNeg :: MonadThrow m => HOLTerm -> m HOLTerm

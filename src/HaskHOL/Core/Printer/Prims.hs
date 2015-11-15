@@ -1,4 +1,16 @@
 {-# LANGUAGE TypeFamilies #-}
+{-|
+  Module:    HaskHOL.Core.Printer.Prims
+  Copyright: (c) Evan Austin 2015
+  LICENSE:   BSD3
+
+  Maintainer:  e.c.austin@gmail.com
+  Stability:   unstable
+  Portability: unknown
+
+  This module implements the primitive data types and methods for HaskHOL's
+  pretty printer.
+-}
 module HaskHOL.Core.Printer.Prims where
 
 import HaskHOL.Core.Lib
@@ -45,11 +57,13 @@ initUnspaced = [",", "..", "$"]
 initPrebroken :: [Text]
 initPrebroken = ["==>"]
 
+-- | The initial pretty-printer context.
 initPrintContext :: PrintContext
 initPrintContext = PrintContext [] initBinderOps initTyBinderOps []
     (grabInfix "lefts" initInfixOps) (grabInfix "rights" initInfixOps)
     initUnspaced initPrebroken
 
+-- | Retrieves the current pretty-printer context.
 printContext :: HOL cls thry PrintContext
 printContext =
     do acid <- openLocalStateHOL initPrintContext

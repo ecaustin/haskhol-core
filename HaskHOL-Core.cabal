@@ -3,13 +3,13 @@ version:       1.2.0
 synopsis:      The core logical system of HaskHOL, an EDSL for HOL theorem 
                proving. 
 description:   More details can be found at the following page:  
-               http://haskhol.org. 
+               http:\/\/haskhol.org. 
 license:       BSD3
 license-file:  LICENSE
-author:        Evan Austin <ecaustin@ittc.ku.edu>
-maintainer:    Evan Austin <ecaustin@ittc.ku.edu>
+author:        Evan Austin <e.c.austin@gmail.com>
+maintainer:    Evan Austin <e.c.austin@gmail.com>
 category:      Theorem Provers
-cabal-version: >=1.18
+cabal-version: >=1.22
 build-type:    Simple
 stability:     experimental
 homepage:      http://haskhol.org

@@ -2,10 +2,10 @@
 
 {-|
   Module:    HaskHOL.Core.State
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -211,7 +211,7 @@ newType' name tyop =
          "newType: type " ++ show name ++ " has already been declared."
        acid <- openLocalStateHOL (TypeConstants initTypeConstants)
        updateHOL acid (InsertTypeConstant name tyop)
-       createCheckpointAndCloseHOL acid
+       closeAcidStateHOL acid
        overParseContext typeConstants (mapInsert name tyop)
 
 {-| 
@@ -296,7 +296,7 @@ newConstant' name c =
          "newConstant: constant " ++ show name ++ " has already been declared."
        acid <- openLocalStateHOL (TermConstants initTermConstants)
        updateHOL acid (InsertTermConstant name c)
-       createCheckpointAndCloseHOL acid
+       closeAcidStateHOL acid
        overParseContext termConstants (mapInsert name c)
 
 {-|
@@ -377,7 +377,7 @@ newAxiom name tm =
                    let th = axiomThm tm in
                      do acid' <- openLocalStateHOL (TheAxioms mapEmpty)
                         updateHOL acid' (InsertAxiom name th)
-                        createCheckpointAndCloseHOL acid'
+                        closeAcidStateHOL acid'
                         return th
                    
 -- | Retrieves an axiom by label from the theory context.
@@ -422,7 +422,7 @@ newBasicDefinition lbl tm =
                      newConstant' x c
                      acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
                      updateHOL acid (InsertCoreDefinition lbl dth)
-                     createCheckpointAndCloseHOL acid
+                     closeAcidStateHOL acid
                      return dth
           _ -> fail "newBasicDefinition: provided term not an equation."
                     
@@ -472,7 +472,7 @@ newBasicTypeDefinition tyname absname repname dth =
      newConstant' repname r
      acid <- openLocalStateHOL (TypeDefinitions mapEmpty)
      updateHOL acid (InsertTypeDefinition tyname (dth1, dth2))
-     createCheckpointAndCloseHOL acid
+     closeAcidStateHOL acid
      return (dth1, dth2)
 
 -- | Retrieves a basic type definition by label from the theory context.

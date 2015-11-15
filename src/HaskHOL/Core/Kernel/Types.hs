@@ -2,10 +2,10 @@
 
 {-|
   Module:    HaskHOL.Core.Kernel.Types
-  Copyright: (c) The University of Kansas 2013
+  Copyright: (c) Evan Austin 2015
   LICENSE:   BSD3
 
-  Maintainer:  ecaustin@ittc.ku.edu
+  Maintainer:  e.c.austin@gmail.com
   Stability:   unstable
   Portability: unknown
 
@@ -637,6 +637,7 @@ variantTyVars avoid (tv:tvs) =
     let tv' = variantTyVar avoid tv in
       tv : variantTyVars (tv':avoid) tvs
 
+-- | The initial type constants.
 initTypeConstants :: Map Text TypeOp
 initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
 
