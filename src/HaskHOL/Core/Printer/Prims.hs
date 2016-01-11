@@ -60,7 +60,7 @@ initPrebroken = ["==>"]
 -- | The initial pretty-printer context.
 initPrintContext :: PrintContext
 initPrintContext = PrintContext [] initBinderOps initTyBinderOps []
-    (grabInfix "lefts" initInfixOps) (grabInfix "rights" initInfixOps)
+    (grabInfix "left" initInfixOps) (grabInfix "right" initInfixOps)
     initUnspaced initPrebroken
 
 -- | Retrieves the current pretty-printer context.

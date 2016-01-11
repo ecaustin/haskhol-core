@@ -54,7 +54,6 @@ module HaskHOL.Core.Basics
     , stripAbs
     , stripTyAbs
       -- * Type Matching Functions
-    , typeMatch
     , mkMConst
     , mkIComb
     , listMkIComb
@@ -153,6 +152,7 @@ import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics.Nets
+import HaskHOL.Core.Parser.Rep
 
 -- Term and Type Generation
 {-|  
@@ -603,62 +603,6 @@ stripAbs = splitList destAbs
 stripTyAbs :: HOLTerm -> ([HOLType], HOLTerm)
 stripTyAbs = splitList destTyAbs
 
--- type matching
-{-|
-  Computes a tiplet of substitution environments that can be used to make two
-  types match.  The triplet argument can be used to constrain the match, or
-  its three environments can be left empty to find the most general match.
-  Fails with 'Nothing' in the event that a match cannot be found that satisfies
-  the provided constraint.
--}
-typeMatch :: (MonadCatch m, MonadThrow m) 
-          => HOLType -> HOLType -> SubstTrip -> m SubstTrip
-typeMatch vty cty sofar =
-    liftM snd $ typeMatchRec vty cty ([], sofar)
-  where typeMatchRec :: (MonadCatch m, MonadThrow m) => HOLType -> HOLType 
-                     -> ([HOLType], SubstTrip) -> m ([HOLType], SubstTrip)
-        typeMatchRec v@TyVar{} c acc@(env, (sfar, opTys, opOps))
-            | v `elem` env = return acc
-            | otherwise =
-                case lookup v sfar of
-                  Just c'
-                    | c' == c -> return acc
-                    | otherwise -> throwM $! HOLTypeError v 
-                          "typeMatchRec: variable not found in environment."
-                  Nothing -> return (env, ((v, c):sfar, opTys, opOps))
-        typeMatchRec (UType tvv varg) 
-                     (UType tvc carg) (env, sfar) =
-            let carg' = if tvv == tvc then carg 
-                        else typeSubst [(tvc, tvv)] carg in
-              typeMatchRec varg carg' (tvv:env, sfar)
-        typeMatchRec ty@(TyApp vop vargs) 
-                     (TyApp cop cargs) acc@(env, (sfar, opTys, opOps))
-            | vop == cop = foldr2M typeMatchRec acc vargs cargs
-            | isTypeOpVar vop && isTypeOpVar cop =
-                do copTy <- uTypeFromTypeOpVar cop $ length cargs
-                   case lookup vop opTys of
-                     Just cop'
-                         | cop' == copTy -> 
-                             foldr2M typeMatchRec acc vargs cargs
-                         | otherwise -> throwM $! HOLTypeOpError vop
-                             "typeMatchRec: typeop not found in environment."
-                     Nothing -> 
-                         foldr2M typeMatchRec 
-                           (env, (sfar, (vop, copTy):opTys, opOps)) vargs cargs 
-            | isTypeOpVar vop =
-                case lookup vop opOps of
-                  Just cop'
-                    | cop' == cop -> foldr2M typeMatchRec acc vargs cargs
-                    | otherwise -> throwM $! HOLTypeOpError vop
-                        "typeMatchRec: typeop not found in environment."
-                  Nothing -> 
-                      foldr2M typeMatchRec 
-                        (env, (sfar, opTys, (vop, cop):opOps)) vargs cargs
-            | otherwise = throwM $! HOLTypeError ty
-                "typeMatchRec:  mismatched type applications."
-        typeMatchRec _ ty _ = throwM $! HOLTypeError ty
-            "typeMatchRec:  mismatched types."
-
 -- matching version of mkConst
 {-|
   Constructs an instance of a constant of the provided name and type.  Relies
@@ -682,7 +626,7 @@ mkMConst name ty =
   between the domain type of the function and the type of the argument.  Fails
   with 'Nothing' if instantiation is impossible.
 -}
-mkIComb :: (MonadCatch m, MonadThrow m) => HOLTerm -> HOLTerm -> m HOLTerm
+mkIComb :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
 mkIComb tm1 tm2 =
     do (ty, _) <- destFunTy $ typeOf tm1
        mat <- typeMatch ty (typeOf tm2) ([], [], [])
@@ -969,7 +913,7 @@ destIff (Comb (Comb (Const "=" (TyBool :-> _)) l) r) = return (l, r)
 destIff tm = throwM $! HOLTermError tm "destIff"
 
 -- | The pattern synonym equivalent of 'destIff'.
-pattern l :<=> r <- Comb (Comb (Const "=" (TyBool :-> TyBool :-> TyBool)) l) r
+pattern l :<=> r <- Comb (Comb (Const "=" (TyBool :-> _)) l) r
 
 -- | Destructor for boolean conjunctions.
 destConj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)

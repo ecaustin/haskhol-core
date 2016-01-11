@@ -70,7 +70,6 @@ module HaskHOL.Core.Parser
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State.Monad
-import HaskHOL.Core.Basics
 
 import HaskHOL.Core.Parser.Lib hiding ((<|>))
 import qualified HaskHOL.Core.Parser.Prims as Parser

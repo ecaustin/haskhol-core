@@ -488,7 +488,7 @@ extendTheory old modname m =
   A version of 'putDoc' lifted to the 'HOL' monad for use with pretty printers.
 -}
 putDocHOL :: Doc a -> HOL cls thry ()
-putDocHOL x = HOL $ \ _ _ _ -> putDoc x
+putDocHOL x = HOL $ \ _ _ _ -> putDoc x >> putStr "\n"
 
 -- | A version of 'putStr' lifted to the 'HOL' monad.
 putStrHOL :: String -> HOL cls thry ()

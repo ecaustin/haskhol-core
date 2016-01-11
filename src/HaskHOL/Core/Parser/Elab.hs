@@ -19,7 +19,6 @@ module HaskHOL.Core.Parser.Elab
     ) where
 
 import HaskHOL.Core.Lib hiding (ask)
-import HaskHOL.Core.Basics hiding (mkMConst, mkGAbs, mkBinder)
 import HaskHOL.Core.Kernel
 
 import HaskHOL.Core.Parser.Lib hiding ((<|>), gets)
@@ -139,7 +138,7 @@ mkGAbs tm1 tm2 =
   where mkGEq :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
         mkGEq t1 t2 = 
           do p <- mkConst "GEQ" ([(tyA, typeOf t1)], [], [])
-             mkBinop p t1 t2
+             flip mkComb t2 =<< (mkComb p t1)
 
 mkType :: Text -> [HOLType] -> ElabM s HOLType
 mkType name args =

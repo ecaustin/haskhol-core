@@ -1393,7 +1393,7 @@ class Lang a => LangSeq a where
       failure.
     -}
     _REPEAT :: a -> a
-    _REPEAT x = (x `_THEN` _REPEAT x) `_ORELSE` x
+    _REPEAT x = (x `_THEN` _REPEAT x) `_ORELSE` _ALL
     {-| 
       A language combinator that performs every operation in a list  
       sequentially.

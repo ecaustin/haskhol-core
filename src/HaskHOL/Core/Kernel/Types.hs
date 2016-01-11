@@ -94,6 +94,7 @@ module HaskHOL.Core.Kernel.Types
     , variantTyVar
     , variantTyVars
     , initTypeConstants
+    , typeMatch
     ) where
 
 import HaskHOL.Core.Lib
@@ -640,6 +641,61 @@ variantTyVars avoid (tv:tvs) =
 -- | The initial type constants.
 initTypeConstants :: Map Text TypeOp
 initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
+
+{-|
+  Computes a tiplet of substitution environments that can be used to make two
+  types match.  The triplet argument can be used to constrain the match, or
+  its three environments can be left empty to find the most general match.
+  Fails with 'Nothing' in the event that a match cannot be found that satisfies
+  the provided constraint.
+-}
+typeMatch :: (MonadCatch m, MonadThrow m) 
+          => HOLType -> HOLType -> SubstTrip -> m SubstTrip
+typeMatch vty cty sofar =
+    liftM snd $ typeMatchRec vty cty ([], sofar)
+  where typeMatchRec :: (MonadCatch m, MonadThrow m) => HOLType -> HOLType 
+                     -> ([HOLType], SubstTrip) -> m ([HOLType], SubstTrip)
+        typeMatchRec v@TyVar{} c acc@(env, (sfar, opTys, opOps))
+            | v `elem` env = return acc
+            | otherwise =
+                case lookup v sfar of
+                  Just c'
+                    | c' == c -> return acc
+                    | otherwise -> throwM $! HOLTypeError v 
+                          "typeMatchRec: variable not found in environment."
+                  Nothing -> return (env, ((v, c):sfar, opTys, opOps))
+        typeMatchRec (UType tvv varg) 
+                     (UType tvc carg) (env, sfar) =
+            let carg' = if tvv == tvc then carg 
+                        else typeSubst [(tvc, tvv)] carg in
+              typeMatchRec varg carg' (tvv:env, sfar)
+        typeMatchRec ty@(TyApp vop vargs) 
+                     (TyApp cop cargs) acc@(env, (sfar, opTys, opOps))
+            | vop == cop = foldr2M typeMatchRec acc vargs cargs
+            | isTypeOpVar vop && isTypeOpVar cop =
+                do copTy <- uTypeFromTypeOpVar cop $ length cargs
+                   case lookup vop opTys of
+                     Just cop'
+                         | cop' == copTy -> 
+                             foldr2M typeMatchRec acc vargs cargs
+                         | otherwise -> throwM $! HOLTypeOpError vop
+                             "typeMatchRec: typeop not found in environment."
+                     Nothing -> 
+                         foldr2M typeMatchRec 
+                           (env, (sfar, (vop, copTy):opTys, opOps)) vargs cargs 
+            | isTypeOpVar vop =
+                case lookup vop opOps of
+                  Just cop'
+                    | cop' == cop -> foldr2M typeMatchRec acc vargs cargs
+                    | otherwise -> throwM $! HOLTypeOpError vop
+                        "typeMatchRec: typeop not found in environment."
+                  Nothing -> 
+                      foldr2M typeMatchRec 
+                        (env, (sfar, opTys, (vop, cop):opOps)) vargs cargs
+            | otherwise = throwM $! HOLTypeError ty
+                "typeMatchRec:  mismatched type applications."
+        typeMatchRec _ ty _ = throwM $! HOLTypeError ty
+            "typeMatchRec:  mismatched types."
 
 -- Documentation copied from HaskHOL.Core.Prims
 
