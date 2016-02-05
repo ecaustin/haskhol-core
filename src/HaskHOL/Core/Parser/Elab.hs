@@ -26,9 +26,10 @@ import HaskHOL.Core.Parser.Prims
 
 import Control.Lens hiding (op, cons, snoc)
 import Control.Monad.ST
-import Data.STRef
 import Control.Monad.Trans
 import Control.Monad.Trans.Reader
+
+import Data.STRef
 
 -- Static Configuration
 {-|
@@ -79,7 +80,7 @@ modElabState f =
 viewElabState :: (ElabState -> a) -> ElabM s a
 viewElabState f =
     do ref <- ask
-       lift . lift . liftM f $ readSTRef ref
+       lift . lift $ f `fmap` readSTRef ref
 
 -- utility functions
 addWarning :: Bool -> String -> ElabM s ()
@@ -104,7 +105,7 @@ getTypeConstants = viewElabState $ view (parseCtxt . typeConstants)
 getConstType :: Text -> ElabM s HOLType
 getConstType name = 
     do consts <- getConstants
-       (liftM typeOf $ mapAssoc name consts) <?> "getConstType"
+       (typeOf `fmap` mapAssoc name consts) <?> "getConstType"
 
 mkConst :: Text -> SubstTrip -> ElabM s HOLTerm
 mkConst name pat =
@@ -138,7 +139,8 @@ mkGAbs tm1 tm2 =
   where mkGEq :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
         mkGEq t1 t2 = 
           do p <- mkConst "GEQ" ([(tyA, typeOf t1)], [], [])
-             flip mkComb t2 =<< (mkComb p t1)
+             tm <- mkComb p t1
+             mkComb tm t2 
 
 mkType :: Text -> [HOLType] -> ElabM s HOLType
 mkType name args =
@@ -204,7 +206,7 @@ mkFunPTy pty1 pty2 = PTyComb (PTyCon "fun") [pty1, pty2]
 -- Construct a constant that has one or more instantiations provided
 mkTIConst :: Text -> HOLType -> HOLTypeEnv -> ElabM s HOLTerm
 mkTIConst c ty subs =
-    do cty' <- liftM (typeSubst subs) $ getConstType c
+    do cty' <- typeSubst subs `fmap` getConstType c
        (mat1Tys, opTys, opOps) <- typeMatch cty' ty ([], [], [])
        let tys' = map (second $ typeSubst mat1Tys) subs ++ mat1Tys
            mat2 = (tys', opTys, opOps)
@@ -262,7 +264,7 @@ istrivial env x (PUTy _ tbody) =
 newTypeVar :: ElabM s PreType
 newTypeVar = 
     do modElabState $ over tyCounter succ
-       liftM STyVar . viewElabState $ view tyCounter
+       STyVar `fmap` viewElabState (view tyCounter)
 
 -- Turn UType term into a non-UType by adding type applications
 addTyApps :: PreTerm -> PreType -> ElabM s PreTerm
@@ -325,7 +327,7 @@ solve :: PEnv -> PreType -> PreType
 solve _ pty@PTyCon{} = pty 
 solve _ pty@UTyVar{} = pty
 solve env pty@(STyVar i) =
-    maybe pty id . liftM (solve env) $ lookup i env
+    maybe pty (solve env) (lookup i env)
 solve env (PTyComb f args) = 
     PTyComb (solve env f) $ map (solve env) args
 solve env (PUTy tv tbod) =
@@ -385,7 +387,7 @@ tmElab ptm =
             "tmElab: type application present outside of type " ++
             "combination term"
         tmElabRec (PVar s pty) = 
-            liftM (mkVar s) $ tyElabRef pty
+            mkVar s `fmap` tyElabRef pty
         tmElabRec (PConst s pty) = 
             mkMConst s =<< tyElabRef pty
         tmElabRec (PInst tvis (PConst c pty)) =
@@ -585,14 +587,14 @@ preTypeOf senv pretm =
             do (v', bod') <- pairMapM (solvePreterm env) (v, bod)
                return $! PAbs v' bod'
         solvePreterm env (TyPAbs tv bod) =
-            liftM (TyPAbs tv) $ solvePreterm env bod
+            TyPAbs tv `fmap` solvePreterm env bod
         solvePreterm env (TyPComb t ty ti) =
             let ti' = solve env ti in
               do modElabState $ over smallSTVS (`union` freeSTVS0 ti')
                  t' <- solvePreterm env t
                  return $! TyPComb t' (solve env ty) ti'
         solvePreterm env (PInst tys bod) =
-            liftM (PInst tys) $ solvePreterm env bod
+            PInst tys `fmap` solvePreterm env bod
         solvePreterm _ PAs{} =
             fail' "solvePreterm: type ascription"
         solvePreterm env (PConst s ty) =
@@ -643,24 +645,23 @@ preTypeOf senv pretm =
                    Just x' -> unify env (x', t)
                    _ -> 
                        do cond <- istrivial env x t <?> "handleSTVS"
-                          case cond of
-                            True -> return env
-                            False ->
-                              do stvs <- viewElabState $ view smallSTVS
-                                 let t' = destSTV t
-                                 when (x `elem` stvs && test' t') . 
-                                   modElabState $ over smallSTVS 
-                                     ((:) (try' t'))
-                                 return $! insertMap x t env
+                          if cond
+                             then return env
+                             else do stvs <- viewElabState $ view smallSTVS
+                                     let t' = destSTV t
+                                     when (x `elem` stvs && test' t') . 
+                                       modElabState $ over smallSTVS 
+                                         ((:) (try' t'))
+                                     return $! insertMap x t env
 
 -- | Elaborator for 'PreType's.
 tyElab :: MonadThrow m => ParseContext -> PreType -> m HOLType
-tyElab ctxt pty = either (fail' . show) return $ runST $
-    do ref <- newSTRef $ initElabState ctxt
-       runCatchT $ runReaderT (tyElabRef pty) ref
+tyElab ctxt pty = either (fail' . show) return $ runST
+    (do ref <- newSTRef $ initElabState ctxt
+        runCatchT $ runReaderT (tyElabRef pty) ref)
 
 -- | Elaborator and type inference for 'PreTerm's.
 elab :: MonadThrow m => ParseContext -> PreTerm -> m HOLTerm
-elab ctxt ptm = either (fail' . show) return $ runST $
-    do ref <- newSTRef $ initElabState ctxt
-       runCatchT $ runReaderT (tmElab =<< preTypeOf [] ptm) ref
+elab ctxt ptm = either (fail' . show) return $ runST
+    (do ref <- newSTRef $ initElabState ctxt
+        runCatchT $ runReaderT (tmElab =<< preTypeOf [] ptm) ref)

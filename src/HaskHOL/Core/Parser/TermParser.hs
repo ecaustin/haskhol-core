@@ -115,7 +115,6 @@ pbinder =
                 return $! mkTyBinders bind vars bod)
              <|> (return $! PVar bind dpty))
     <|> pinst
-    where 
 
 psmall :: MyParser PreType
 psmall =

@@ -85,12 +85,12 @@ modPrintState f =
 viewPrintState :: (PrintState -> a) -> PrintM s a
 viewPrintState f =
     do ref <- ask
-       lift . lift . liftM f $ readSTRef ref
+       lift . lift $ f `fmap` readSTRef ref
 
 testPrintState :: (PrintState -> a) -> (a -> Bool) -> PrintM s Bool
 testPrintState f p =
     do ref <- ask
-       liftM p . lift . lift . liftM f $ readSTRef ref
+       p `fmap` (lift . lift $ f `fmap` readSTRef ref)
 
 -- utility functions
 {-| 
@@ -240,10 +240,10 @@ ppType ty =
 ppTerm :: HOLTerm -> PrintM s TermDoc
 ppTerm tm =
 -- numeral case
-    (liftM pretty $ destNumeral tm) <|>
+    (pretty `fmap` destNumeral tm) <|>
 -- List case
-    (liftM (encloseSep lbracket rbracket semi) $ 
-             mapM (\ x -> setPrec 0 >> ppTerm x) =<< destList tm) <|>
+    (encloseSep lbracket rbracket semi `fmap` 
+       (mapM (\ x -> setPrec 0 >> ppTerm x) =<< destList tm)) <|>
 -- Type combination case
     (ppTyComb =<< destTyComb tm) <|>
 -- Let case
@@ -290,8 +290,8 @@ ppBinders s hop args tm =
 
 ppOperators :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s TermDoc
 ppOperators s hop args tm =
-    do getRight <- liftM (assoc s) getRights
-       getLeft <- liftM (assoc s) getLefts
+    do getRight <- assoc s `fmap` getRights
+       getLeft <- assoc s `fmap` getLefts
        if (test' getRight || test' getLeft) && length args == 2
           then do args' <- 
                      if test' getRight
@@ -309,8 +309,7 @@ ppOperators s hop args tm =
                                    then x `sepr` (pretty s <+> y)
                                    else (x <+> pretty s) `sepr` y
                   (barg:bargs) <- mapM (\x -> setPrec newprec >> ppTerm x) args'
-                  return . wrapper . foldr (\ x acc -> acc `hanger` x) barg $ 
-                             reverse bargs
+                  return . wrapper . foldr (flip hanger) barg $ reverse bargs
 -- Base constant or variable case
           else ppConstants s hop args
   where destBinaryTm :: HOLTerm -> HOLTerm -> PrintM s (HOLTerm, HOLTerm)
@@ -332,8 +331,8 @@ ppConstants s hop args
     | null args && (isConst hop || isVar hop) =
           do cond1 <- parsesAsBinder s
              cond2 <- parsesAsTyBinder s
-             cond3 <- liftM (test' . assoc s) getRights
-             cond4 <- liftM (test' . assoc s) getLefts
+             cond3 <- (test' . assoc s) `fmap` getRights
+             cond4 <- (test' . assoc s) `fmap` getLefts
              cond5 <- parsesAsPrefix s
              let base = pretty s
              return $! if cond1 || cond2 || cond3 || cond4 || cond5
@@ -455,7 +454,7 @@ destClauses tm =
               return [c]
   where destClause :: MonadThrow m => HOLTerm -> m [HOLTerm]
         destClause tm' =
-            do (_, pbod) <- liftM stripExists $ body =<< body tm'
+            do (_, pbod) <- stripExists `fmap` (body =<< body tm')
                let (s, args) = stripComb pbod
                if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
                   then do tm'1 <- rand =<< rator (head args)
@@ -551,7 +550,7 @@ showHOLListRec sepr (x:xs) = (x <> sepr <> space) : showHOLListRec sepr xs
 
 -- orphan instances
 instance ShowHOL HOLType where
-    showHOL = liftM (char ':' <>) . ppType
+    showHOL ty = (char ':' <>) `fmap` ppType ty
 
 instance ShowHOL HOLTerm where
     showHOL = ppTerm
@@ -566,6 +565,6 @@ instance ShowHOL HOLThm where
 printHOL :: ShowHOL a => a -> HOL cls thry ()
 printHOL x = 
     do ctxt <- printContext
-       either (fail . show) putDocHOL $ runST $
-         do ref <- newSTRef $ initPrintState ctxt
-            runCatchT $ runReaderT (showHOL x) ref
+       either (fail . show) putDocHOL $ runST
+         (do ref <- newSTRef $ initPrintState ctxt
+             runCatchT $ runReaderT (showHOL x) ref)

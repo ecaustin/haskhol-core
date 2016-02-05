@@ -101,6 +101,9 @@ import Shelly hiding (put, get)
 import System.FilePath (combine)
 import Data.Text (pack)
 
+-- Util Imports
+import Data.Maybe (fromMaybe)
+
 -- interpreter stuff
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
@@ -683,7 +686,7 @@ getBenignFlag flag =
     do acid <- openLocalStateHOL (BenignFlags mapEmpty)
        val <- queryHOL acid (LookupFlag (tyToIndex flag))
        closeAcidStateHOL acid
-       return $! maybe (initFlagValue flag) id val
+       return $! fromMaybe (initFlagValue flag) val
 
 -- Fresh Name Generation
 

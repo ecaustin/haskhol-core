@@ -115,7 +115,7 @@ termImageM :: Monad m => (HOLTerm -> m HOLTerm) -> [HOLTerm] -> m [HOLTerm]
 termImageM _ [] = return []
 termImageM f (h:t) = 
     do h' <- f h
-       liftM (termUnion [h']) $ termImageM f t
+       termUnion [h'] `fmap` termImageM f t
 
 {-
    HOL Light Theorem Primitives
@@ -325,7 +325,7 @@ primINST :: MonadThrow m => HOLTermEnv -> HOLThm -> m HOLThm
 primINST env (ThmIn as t) = 
     let instFun = varSubst env in
       do as' <- termImageM instFun as 
-         liftM (ThmIn as') $ instFun t
+         ThmIn as' `fmap` instFun t
 
 {-
    HOL2P Primitive Inference Rules

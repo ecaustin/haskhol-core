@@ -39,6 +39,8 @@ module HaskHOL.Core
     , primTYAPP2
     , primTYAPP
     , primTYBETA
+    , mkComb
+    , subst
       -- * Library and Utility Functions
     , module HaskHOL.Core.Lib
       -- * Logical Kernel
@@ -63,17 +65,21 @@ import HaskHOL.Core.Kernel hiding ( axiomThm, newDefinedConst, newDefinedTypeOp
                                   , primEQ_MP, primDEDUCT_ANTISYM
                                   , primINST_TYPE, primINST_TYPE_FULL
                                   , primINST, primTYABS, primTYAPP2
-                                  , primTYAPP, primTYBETA )
+                                  , primTYAPP, primTYBETA 
+                                  , mkComb
+                                  )
 import HaskHOL.Core.State hiding ( newConstant, newAxiom, newBasicDefinition )
-import HaskHOL.Core.Basics
+import HaskHOL.Core.Basics hiding (subst)
 import HaskHOL.Core.Parser hiding ( makeOverloadable, reduceInterface 
                                   , overrideInterface, overloadInterface
-                                  , prioritizeOverload, newTypeAbbrev )
+                                  , prioritizeOverload, newTypeAbbrev 
+                                  )
 import HaskHOL.Core.Printer
 import HaskHOL.Core.Ext
 
 import qualified HaskHOL.Core.Kernel as K
 import qualified HaskHOL.Core.State as S
+import qualified HaskHOL.Core.Basics as B
 import qualified HaskHOL.Core.Parser as P
 
 -- This re-export has to exist at the top-most module for some reason?
@@ -156,7 +162,7 @@ newTypeAbbrev s = P.newTypeAbbrev s <=< toHTy
   representations as defined by 'HOLTermRep'.
 -}
 primREFL :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
-primREFL = liftM (K.primREFL) . toHTm
+primREFL pthm = K.primREFL `fmap` toHTm pthm
 
 {-| 
   A redefinition of 'K.primTRANS' to overload it for all valid theorem
@@ -231,7 +237,7 @@ primDEDUCT_ANTISYM pthm1 pthm2 =
 -}
 primINST_TYPE :: (HOLThmRep thm cls thry, Inst a b) 
               => [(a, b)] -> thm -> HOL cls thry HOLThm
-primINST_TYPE tyenv = liftM (K.primINST_TYPE tyenv) . toHThm
+primINST_TYPE tyenv pthm = K.primINST_TYPE tyenv `fmap` toHThm pthm
 
 {-| 
   A redefinition of 'K.primINST_TYPE_FULL' to overload it for all valid theorem
@@ -239,7 +245,7 @@ primINST_TYPE tyenv = liftM (K.primINST_TYPE tyenv) . toHThm
 -}
 primINST_TYPE_FULL :: HOLThmRep thm cls thry 
                    => SubstTrip -> thm -> HOL cls thry HOLThm
-primINST_TYPE_FULL tyenv = liftM (K.primINST_TYPE_FULL tyenv) . toHThm
+primINST_TYPE_FULL tyenv pthm = K.primINST_TYPE_FULL tyenv `fmap` toHThm pthm
 
 {-| 
   A redefinition of 'K.primINST' to overload it for all valid theorem
@@ -293,3 +299,19 @@ primTYAPP pty pthm =
 -}
 primTYBETA :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primTYBETA = K.primTYBETA <=< toHTm
+
+-- Usefule overloadings.
+mkComb :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry) 
+       => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkComb ptm1 ptm2 =
+    do tm1 <- toHTm ptm1
+       tm2 <- toHTm ptm2
+       K.mkComb tm1 tm2
+
+subst :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry, 
+          HOLTermRep tm3 cls thry) 
+      => [(tm1, tm2)] -> tm3 -> HOL cls thry HOLTerm
+subst ptmenv ptm = 
+    do tmenv <- mapM (toHTm `ffCombM` toHTm) ptmenv
+       tm <- toHTm ptm
+       B.subst tmenv tm

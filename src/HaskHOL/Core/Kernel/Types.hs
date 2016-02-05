@@ -485,7 +485,7 @@ typeOpInst tyopenv t =
       Right res -> res
       _         -> t
   where arityOf :: (MonadCatch m, MonadThrow m) => HOLType -> m Int
-        arityOf ty = liftM (length . fst) $ destUTypes ty      
+        arityOf ty = (length . fst) `fmap` destUTypes ty      
 
         tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> Catch HOLType
         tyOpInstRec tyopins ty@(TyAppIn op args) =
@@ -582,7 +582,7 @@ mkSmall :: MonadThrow m => HOLType -> m HOLType
 mkSmall (TyVarIn _ s) = 
     return $! TyVarIn True s
 mkSmall (TyAppIn op tvs) = 
-    liftM (TyAppIn op) $! mapM mkSmall tvs
+    TyAppIn op `fmap` mapM mkSmall tvs
 mkSmall ty@UTypeIn{} = throwM $! HOLTypeError ty "mkSmall"
 
 {-| 
@@ -651,8 +651,7 @@ initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
 -}
 typeMatch :: (MonadCatch m, MonadThrow m) 
           => HOLType -> HOLType -> SubstTrip -> m SubstTrip
-typeMatch vty cty sofar =
-    liftM snd $ typeMatchRec vty cty ([], sofar)
+typeMatch vty cty sofar = snd `fmap` typeMatchRec vty cty ([], sofar)
   where typeMatchRec :: (MonadCatch m, MonadThrow m) => HOLType -> HOLType 
                      -> ([HOLType], SubstTrip) -> m ([HOLType], SubstTrip)
         typeMatchRec v@TyVar{} c acc@(env, (sfar, opTys, opOps))

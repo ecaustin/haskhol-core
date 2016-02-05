@@ -198,7 +198,7 @@ tyDefinitions =
 getTypeArity :: Text -> HOL cls thry Int
 getTypeArity name =
     do tys <- types
-       (liftM (snd . destTypeOp) $ mapAssoc name tys) <?>
+       ((snd . destTypeOp) `fmap` mapAssoc name tys) <?>
          "getTypeArity: name has not been defined."
 
 {- 
@@ -283,7 +283,7 @@ constants =
 getConstType :: Text -> HOL cls thry HOLType
 getConstType name =
     do consts <- constants
-       (liftM typeOf $ mapAssoc name consts) <?> 
+       (typeOf `fmap` mapAssoc name consts) <?> 
          "getConstType: not a constant name"
 
 {-

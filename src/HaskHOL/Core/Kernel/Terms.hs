@@ -447,8 +447,8 @@ instRec env tyenv (CombIn f x) =
        mkComb f' x'
 instRec env tyenv (AbsIn y@(VarIn _ ty) t) =
     do y'<- instRec [] tyenv y
-       ((do t' <- instRec ((y', y):env) tyenv t
-            mkAbs y' t') `catch` 
+       (do t' <- instRec ((y', y):env) tyenv t
+           mkAbs y' t') `catch` 
         (\ e@(HOLTermError w' _) ->
            if w' /= y' then throwM e
            else do ifrees <- mapM (instRec [] tyenv) $ frees t
@@ -456,7 +456,7 @@ instRec env tyenv (AbsIn y@(VarIn _ ty) t) =
                      (VarIn x _) -> 
                          let z = mkVar x ty in
                            instRec env tyenv =<< mkAbs z =<< varSubst [(y, z)] t
-                     _ -> throwM e))
+                     _ -> throwM e)
 instRec env tyenv tm@TyAbsIn{} = instTyAbs env tyenv tm
 instRec env tyenv (TyCombIn tm ty) =
     do tm' <- instRec env tyenv tm

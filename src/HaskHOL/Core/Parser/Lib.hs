@@ -132,7 +132,7 @@ lexer = makeTokenParser langDef
 
 -- | A version of 'symbol' for our language.
 mysymbol :: String -> MyParser Text
-mysymbol = liftM pack . symbol lexer
+mysymbol s = pack `fmap` symbol lexer s
 
 -- | A version of 'parens' for our language.
 myparens :: MyParser a -> MyParser a
@@ -164,7 +164,7 @@ myreserved = reserved lexer
 
 -- | A version of 'identifier' for our language.
 myidentifier :: MyParser Text
-myidentifier = liftM pack $ identifier lexer
+myidentifier = pack `fmap` identifier lexer
 
 -- | A version of 'integer' for our language.
 myinteger :: MyParser Integer
@@ -172,7 +172,7 @@ myinteger = integer lexer
 
 -- | A version of 'operator' for our language.
 myoperator :: MyParser Text
-myoperator = liftM pack $ operator lexer
+myoperator = pack `fmap` operator lexer
 
 -- | A version of 'reservedOp' for our language.
 myreservedOp :: String -> MyParser ()

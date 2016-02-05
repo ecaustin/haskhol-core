@@ -152,7 +152,6 @@ import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
 import HaskHOL.Core.Basics.Nets
-import HaskHOL.Core.Parser.Rep
 
 -- Term and Type Generation
 {-|  
@@ -409,7 +408,7 @@ findTermsM p = findRec []
   where findRec :: (MonadCatch m, MonadThrow m) 
                 => [HOLTerm] -> HOLTerm -> m [HOLTerm]
         findRec tl tm =
-            do c <- (p tm <|> return False)
+            do c <- p tm <|> return False
                let tl' = if c then insert tm tl else tl
                case tm of
                  Abs _ bod -> findRec tl' bod
@@ -443,11 +442,11 @@ findPath p tm
     | p tm = return []
     | otherwise =
         case tm of
-          Abs _ bod -> liftM ((:) 'b') $ findPath p bod
-          TyAbs _ bod -> liftM ((:) 't') $ findPath p bod
-          Comb l r -> liftM ((:) 'r') (findPath p r) <|>
-                      liftM ((:) 'l') (findPath p l)
-          TyComb bod _ -> liftM ((:) 'c') $ findPath p bod
+          Abs _ bod -> (:) 'b' `fmap` findPath p bod
+          TyAbs _ bod -> (:) 't' `fmap` findPath p bod
+          Comb l r -> (:) 'r' `fmap` findPath p r <|>
+                      (:) 'l' `fmap` findPath p l
+          TyComb bod _ -> (:) 'c' `fmap` findPath p bod
           _ -> fail' "findPath"
 
 {-|
@@ -518,7 +517,7 @@ listMkTyAbs = flip (foldrM mkTyAbs)
   > mkArgs "x" avoids [ty1, ... tyn] === [x1:ty1, ..., xn:tyn] where {x1, ..., xn} are not elements of avoids
 -}
 mkArgs :: Text -> [HOLTerm] -> [HOLType] -> [HOLTerm]
-mkArgs s avoid (ty:[]) = [variant avoid $ mkVar s ty]
+mkArgs s avoid [ty] = [variant avoid $ mkVar s ty]
 mkArgs s avoid tys = mkRec 0 s avoid tys
   where mkRec :: Int -> Text -> [HOLTerm] -> [HOLType] -> [HOLTerm]
         mkRec _ _ _ [] = []
@@ -1173,8 +1172,8 @@ destNumeral (Comb (Const "NUMERAL" _) r) = destNum r
   where destNum :: (MonadThrow m, Num a) => HOLTerm -> m a
         destNum (Const "_0" _) = return 0
         destNum (Comb (Const "BIT0" _) r') =
-          liftM (2 *) $ destNum r'
+          (2 *) `fmap` destNum r'
         destNum (Comb (Const "BIT1" _) r') =
-          liftM (\ x -> 1 + 2 * x) $ destNum r'
+          (\ x -> 1 + 2 * x) `fmap` destNum r'
         destNum tm = throwM $! HOLTermError tm "destNum"
 destNumeral tm = throwM $! HOLTermError tm "destNumeral"

@@ -201,4 +201,4 @@ patomty =
 getTypeArity' :: Text -> MyParser (Maybe Int)
 getTypeArity' x =
     do tys <- gets $ view typeConstants
-       return . liftM (snd . destTypeOp) $ mapAssoc x tys
+       return $ (snd . destTypeOp) `fmap` mapAssoc x tys

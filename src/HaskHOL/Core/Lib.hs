@@ -334,7 +334,7 @@ tryTail _ = fail' "tryTail"
 -- | A guarded version of 'init'.
 tryInit :: MonadThrow m => [a] -> m [a]
 tryInit [_] = return []
-tryInit (x:xs) = liftM ((:) x) $ tryInit xs
+tryInit (x:xs) = (:) x `fmap` tryInit xs
 tryInit _ = fail' "tryInit"
 
 -- | A guarded version of 'last'.
@@ -388,16 +388,16 @@ infix 0 <?>
   Replaces the exception thrown by a computation with a provided 'String' 
   message, i.e.
   
-  > m (<?>) str = m <|> (fail' str)
+  > m (<?>) str = m <|> fail' str
 -}  
 (<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
-m <?> str = m <|> (fail' str)
+m <?> str = m <|> fail' str
 
 {-| 
   Converts the exception thrown by a computaiton to a 'String' and prepends it
   with a provided message.
 -}
-note :: (MonadCatch m, MonadThrow m) => String -> (m a) -> m a
+note :: (MonadCatch m, MonadThrow m) => String -> m a -> m a
 note str m =
     m `catch` (\ e -> case fromException e of
                         Just (HOLErrorMsg str2) -> 
@@ -496,7 +496,7 @@ repeatM f x = (repeatM f =<< f x) <|> return x
 -- | A guarded version of a list map for functions of arity 2.
 map2 :: MonadThrow m => (a -> b -> c) -> [a] -> [b] -> m [c]
 map2 _ [] [] = return []
-map2 f (x:xs) (y:ys) = liftM ((:) (f x y)) $ map2 f xs ys
+map2 f (x:xs) (y:ys) = (:) (f x y) `fmap` map2 f xs ys
 map2 _ _ _ = fail' "map2"
 
 -- | A version of 'map2' that accepts monadic functions.
@@ -540,7 +540,7 @@ revItlistM f = flip (F.foldlM (flip f))
 tryFoldr1 :: MonadThrow m => (a -> a -> a) -> [a] -> m a
 tryFoldr1 _ [] = fail' "tryFoldr1"
 tryFoldr1 _ [x] = return x
-tryFoldr1 f (x:xs) = liftM (f x) $ tryFoldr1 f xs
+tryFoldr1 f (x:xs) = f x `fmap` tryFoldr1 f xs
 
 -- | A version of 'foldr1' that accepts monadic functions.
 foldr1M :: MonadThrow m => (a -> a -> m a) -> [a] -> m a
@@ -551,7 +551,7 @@ foldr1M f (h:t) = f h =<< foldr1M f t
 -- | A guarded version of a right, list fold for functions of arity 2.
 foldr2 :: MonadThrow m => (a -> b -> c -> c) -> c -> [a] -> [b] -> m c
 foldr2 _ b [] [] = return b
-foldr2 f b (x:xs) (y:ys) = liftM (f x y) $ foldr2 f b xs ys
+foldr2 f b (x:xs) (y:ys) = f x y `fmap` foldr2 f b xs ys
 foldr2 _ _ _ _ = fail' "foldr2"
 
 -- | A version of 'foldr2' that accepts monadic functions.
@@ -703,7 +703,7 @@ stripListM dest x = strip x []
   simultaneously with 'map2', using 'and' to combine the results.
 -}
 all2 :: MonadThrow m => (a -> b -> Bool) -> [a] -> [b] -> m Bool
-all2 f xs = liftM and . map2 f xs
+all2 f xs ys = and `fmap` map2 f xs ys
 
 {-| 
   Separates a list of elements using a predicate.  A re-export of 'L.partition'.

@@ -101,7 +101,7 @@ parseContext =
        return ctxt
 
 viewParseContext :: Getting a ParseContext a -> HOL cls thry a
-viewParseContext f = liftM (view f) parseContext
+viewParseContext f = view f `fmap` parseContext
 
 overParseContext :: Setting (->) ParseContext ParseContext a a -> (a -> a) 
                  -> HOL Theory thry ()
@@ -113,4 +113,4 @@ overParseContext f p =
 
 testParseContext :: Optical (->) (->) (Const Bool) ParseContext ParseContext a a
                  -> (a -> Bool) -> HOL cls thry Bool
-testParseContext f p = liftM (views f p) parseContext
+testParseContext f p = views f p `fmap` parseContext

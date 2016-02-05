@@ -72,7 +72,7 @@ printContext =
        return ctxt
 
 viewPrintContext :: Getting a PrintContext a -> HOL cls thry a
-viewPrintContext f = liftM (view f) printContext
+viewPrintContext f = view f `fmap` printContext
 
 overPrintContext :: Setting (->) PrintContext PrintContext a a -> (a -> a) 
                  -> HOL Theory thry ()
@@ -84,4 +84,4 @@ overPrintContext f p =
 
 testPrintContext :: Optical (->) (->) (Const Bool) PrintContext PrintContext a a
                  -> (a -> Bool) -> HOL cls thry Bool
-testPrintContext f p = liftM (views f p) printContext
+testPrintContext f p = views f p `fmap` printContext

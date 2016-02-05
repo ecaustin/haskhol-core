@@ -82,19 +82,19 @@ import HaskHOL.Core.Parser.Rep
 -- Parser Methods
 -- | Specifies a 'Text' to be recognized as a term binder by the parser.
 parseAsBinder :: Text -> HOL Theory thry ()
-parseAsBinder op = let fun =  (\ ops -> nub (op : ops)) in
+parseAsBinder op = let fun ops = nub (op : ops) in
     do Parser.overParseContext Parser.binders fun
        Printer.overPrintContext Printer.binders fun
 
 -- | Specifies a 'Text' to be recognized as a type binder by the parser.
 parseAsTyBinder :: Text -> HOL Theory thry ()
-parseAsTyBinder op = let fun = (\ ops -> nub (op : ops)) in
+parseAsTyBinder op = let fun ops = nub (op : ops) in
     do Parser.overParseContext Parser.tyBinders fun
        Printer.overPrintContext Printer.tyBinders fun
 
 -- | Specifies a 'Text' to be recognized as a prefix operator by the parser.
 parseAsPrefix :: Text -> HOL Theory thry ()
-parseAsPrefix op = let fun = (\ ops -> nub (op : ops)) in
+parseAsPrefix op = let fun ops = nub (op : ops) in
     do Parser.overParseContext Parser.prefixes fun
        Printer.overPrintContext Printer.prefixes fun
 
@@ -115,20 +115,20 @@ parseAsInfix i@(n, (p, as)) =
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a term binder.
 unparseAsBinder :: Text -> HOL Theory thry ()
-unparseAsBinder op = let fun = (delete op) in
+unparseAsBinder op = let fun = delete op in
     do Parser.overParseContext Parser.binders fun
        Printer.overPrintContext Printer.binders fun
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a type binder.
 unparseAsTyBinder :: Text -> HOL Theory thry ()
-unparseAsTyBinder op = let fun = (delete op) in
+unparseAsTyBinder op = let fun = delete op in
     do Parser.overParseContext Parser.tyBinders fun
        Printer.overPrintContext Printer.tyBinders fun
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as a prefix operator.
 -}
 unparseAsPrefix :: Text -> HOL Theory thry ()
-unparseAsPrefix op = let fun = (delete op) in
+unparseAsPrefix op = let fun = delete op in
     do Parser.overParseContext Parser.prefixes fun
        Printer.overPrintContext Printer.prefixes fun
 
@@ -136,7 +136,7 @@ unparseAsPrefix op = let fun = (delete op) in
   Specifies a 'Text' for the parser to stop recognizing as an infix operator.
 -}
 unparseAsInfix :: Text -> HOL Theory thry ()
-unparseAsInfix op = let fun = (filter (\ (x, _) -> x /= op)) in
+unparseAsInfix op = let fun = filter (\ (x, _) -> x /= op) in
     do Parser.overParseContext Parser.infixes fun
        Printer.overPrintContext Printer.rights fun
        Printer.overPrintContext Printer.lefts fun
@@ -184,7 +184,7 @@ getOverloads = Parser.viewParseContext Parser.overloads
 
 -- | Removes all instances of an overloaded symbol from the interface.
 removeInterface :: Text -> HOL Theory thry ()
-removeInterface sym = let fun = (filter (\ (x, _) -> x /= sym)) in
+removeInterface sym = let fun = filter (\ (x, _) -> x /= sym) in
     do Parser.overParseContext Parser.interface fun
        Printer.overPrintContext Printer.interface fun
 {-| 
@@ -196,7 +196,7 @@ reduceInterface :: Text -> HOLTerm -> HOL Theory thry ()
 reduceInterface sym tm =
     do namty <- destConst tm <|> destVar tm <?> 
                   "reduceInterface: term not a constant or variable"
-       let fun = (delete (sym, namty))
+       let fun = delete (sym, namty)
        Parser.overParseContext Parser.interface fun
        Printer.overPrintContext Printer.interface fun
 {-|
@@ -215,7 +215,7 @@ overrideInterface :: Text -> HOLTerm -> HOL Theory thry ()
 overrideInterface sym tm =
     do namty <- destConst tm <|> destVar tm <?> 
                   "overrideInterface: term not a constant or variable"
-       let fun = (\ ifc -> (sym, namty) : filter (\ (x, _) -> x /= sym) ifc)
+       let fun ifc = (sym, namty) : filter (\ (x, _) -> x /= sym) ifc
            m = do Parser.overParseContext Parser.interface fun
                   Printer.overPrintContext Printer.interface fun
        overs <- getOverloads
@@ -274,7 +274,7 @@ overloadInterface sym tm =
        if not . test' $ typeMatch gty (snd namty) ([], [], [])
           then fail "overloadInstance: not an instance of type skeleton"
           else let i = (sym, namty) 
-                   fun = (\ ifc -> i : delete i ifc) in
+                   fun ifc = i : delete i ifc in
                  do Parser.overParseContext Parser.interface fun
                     Printer.overPrintContext Printer.interface fun
 
