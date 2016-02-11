@@ -59,6 +59,7 @@ library
       HaskHOL.Core.Parser  
       HaskHOL.Core.Printer
       HaskHOL.Core.Ext	
+      HaskHOL.Core.Overloadings
 
     exposed: True
     buildable: True
