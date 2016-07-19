@@ -13,12 +13,8 @@
   that do not have this dependence.
 -}
 module HaskHOL.Core.Basics
-    ( -- * Variable Term and Type Generation
-      genVarWithName
-    , genVar
-    , genSmallTyVar
-      -- * Common Type Functions
-    , occursIn
+    ( -- * Common Type Functions
+      occursIn
     , tysubst
     , alphaUtype
       -- * Common Term Functions
@@ -54,17 +50,14 @@ module HaskHOL.Core.Basics
     , stripAbs
     , stripTyAbs
       -- * Type Matching Functions
-    , mkMConst
     , mkIComb
-    , listMkIComb
       -- * Predicates, Constructors, and Destructors for Binary Terms
     , isBinary 
     , isBinop
     , destBinary
     , pattern Binary
-    , pattern Binary'
     , destBinop
-    , mkBinary
+    , pattern Binop
     , mkBinop
     , listMkBinop
     , binops
@@ -75,14 +68,12 @@ module HaskHOL.Core.Basics
     , destGAbs
     , destBinder
     , pattern Bind
-    , pattern Bind'
+    , destBinderWhole
+    , pattern BindWhole
     , destTyBinder
     , pattern TyBind
-    , pattern TyBind'
-    , mkGAbs
-    , mkBinder
-    , mkTyBinder
-    , listMkGAbs
+    , destTyBinderWhole
+    , pattern TyBindWhole
     , stripGAbs
       -- * Predicates, Constructors, and Destructors for Propositions
     , isIff
@@ -115,20 +106,6 @@ module HaskHOL.Core.Basics
     , pattern TyAll
     , destTyEx
     , pattern TyEx
-    , mkIff
-    , mkConj
-    , mkImp
-    , mkForall
-    , mkExists
-    , mkDisj
-    , mkNeg
-    , mkUExists
-    , mkTyAll
-    , mkTyEx
-    , listMkConj
-    , listMkDisj
-    , listMkForall
-    , listMkExists
     , conjuncts
     , disjuncts
     , stripForall
@@ -142,7 +119,6 @@ module HaskHOL.Core.Basics
     , destCons
     , destList
     , destLet
-    , mkLet
     , destNumeral
       -- * Term Nets
     , module HaskHOL.Core.Basics.Nets
@@ -150,31 +126,11 @@ module HaskHOL.Core.Basics
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
 import HaskHOL.Core.Basics.Nets
 
--- Term and Type Generation
-{-|  
-  Generates a new term variable consisting of a given prefix and the next value
-  in the fresh term counter.
--}
-genVarWithName :: Text -> HOLType -> HOL cls thry HOLTerm
-genVarWithName n ty =
-    do count <- tickTermCounter
-       return $! mkVar (n `append` pack (show count)) ty
-
--- | A version of 'genVarWithName' that defaults to the prefix \"_\".
-genVar :: HOLType -> HOL cls thry HOLTerm
-genVar = genVarWithName "_"
-
-{-|
-  Generates a new small, type variable with a name built using the fresh type
-  counter.
--}
-genSmallTyVar :: HOL cls thry HOLType
-genSmallTyVar =
-    do count <- tickTypeCounter
-       (mkSmall . mkVarType . pack $ '_':show count) <?> "genSmallTyVar"
+-- Term Generation
+mkVarInt :: Int -> HOLType -> HOLTerm
+mkVarInt n = mkVar ('_' `cons` textShow n)
 
 -- functions for manipulating types
 {-| 
@@ -188,7 +144,6 @@ occursIn ty bigTy
                   TyApp _ args -> any (occursIn ty) args
                   _ -> False
 
-
 {-| 
   Basic type substitution that ignores type operators and prunes the 
   substitution environment of bound variables rather than handle renaming.
@@ -199,20 +154,18 @@ occursIn ty bigTy
   environments in the systems, such that for the pair @(A, B)@ @B@ will be 
   substituted for all instances of @A@.
 -}
-tysubst :: (MonadCatch m, MonadThrow m) => HOLTypeEnv -> HOLType -> m HOLType
+tysubst :: MonadCatch m => HOLTypeEnv -> HOLType -> m HOLType
 tysubst env ty =
-  case lookup ty env of
-    Just res -> return res
-    Nothing ->
-      case ty of
-        TyVar{} -> return ty
-        TyApp tycon tyvars -> 
-          (tyApp tycon =<< mapM (tysubst env) tyvars) <?>
-            "tysubst: bad type application"
-        UType bv bod -> 
-          (mkUType bv =<< tysubst (filter (\ (x, _) -> x /= bv) env) bod) <?>
-            "tysubst: bad universal type"
-        _ -> throwM $! HOLExhaustiveWarning "tysubst"
+  assoc ty env <|> 
+     case ty of
+       TyVar{} -> return ty
+       TyApp tycon tyvars -> 
+         (tyApp tycon =<< mapM (tysubst env) tyvars) <?>
+           "tysubst: bad type application"
+       UType bv bod -> 
+         (mkUType bv =<< tysubst (filter (\ (x, _) -> x /= bv) env) bod) <?>
+           "tysubst: bad universal type"
+       _ -> throwM $! HOLExhaustiveWarning "tysubst"
 
 {-|
   Alpha conversion for universal types.  Renames a bound type variable to match
@@ -225,16 +178,18 @@ tysubst env ty =
 
   * The type variable is free in the body of the universal type.
 -}
-alphaUtype :: (MonadCatch m, MonadThrow m) => HOLType -> HOLType -> m HOLType
+alphaUtype :: MonadCatch m => HOLType -> HOLType -> m HOLType
 alphaUtype tv@(TyVar True _) ty@(UType tv0 bod)
     | tv == tv0 = return ty
-    | tv `elem` tyVars bod = throwM $! HOLTypeError ty 
-          "alphaUtype: variable free in body of type."
-    | otherwise = mkUType tv (typeSubst [(tv0, tv)] bod) <?>
-                    "alphaUtype: construction of universal type failed."
-alphaUtype ty UType{} = throwM $! HOLTypeError ty
-    "alphaUtype: first type not a small type variable."
-alphaUtype _ ty = throwM $! HOLTypeError ty "alphaUtype: not a universal type."
+    | tv `elem` tyVars bod = 
+        throwM $! HOLTypeError ty "alphaUtype: variable free in body of type."
+    | otherwise =
+        mkUType tv (typeSubst [(tv0, tv)] bod) <?>
+          "alphaUtype: construction of universal type failed."
+alphaUtype tv UType{} =
+   throwM $! HOLTypeError tv "alphaUtype: first type not a small type variable."
+alphaUtype _ ty = 
+    throwM $! HOLTypeError ty "alphaUtype: not a universal type."
 
 -- functions for manipulating terms
 {-| 
@@ -242,12 +197,10 @@ alphaUtype _ ty = throwM $! HOLTypeError ty "alphaUtype: not a universal type."
   to perform the required instantiation.  Throws a 'HOLException' in the case 
   when the types of the two terms do not agree.
 -}
-mkEq :: (MonadCatch m, MonadThrow m) => HOLTerm -> HOLTerm -> m HOLTerm
-mkEq l r =
-    (let ty = typeOf l
-         eq = tmEq ty in
-       do l' <- mkComb eq l
-          mkComb l' r) <?> "mkEq"
+mkEq :: MonadCatch m => HOLTerm -> HOLTerm -> m HOLTerm
+mkEq l r = 
+    (do eq <- mkComb (tmEq $ typeOf l) l
+        mkComb eq r) <?> "mkEq"
 
 {-| 
   Predicate to check if the first term is free in the second modulo
@@ -283,12 +236,12 @@ variables = vars []
 -}
 subst :: MonadThrow m => HOLTermEnv -> HOLTerm -> m HOLTerm
 subst ilist tm =
-    let (xs, ts) = unzip ilist
-        gs = map (unsafeGenVar . typeOf) xs in
-      do tm' <- ssubst (zip xs gs) tm
-         if tm' == tm
-            then return tm
-            else varSubst (zip gs ts) tm'
+  let (xs, ts) = unzip ilist
+      gs = map (\ (n, x) -> mkVarInt n $ typeOf x) $ zip [0..] xs in
+    do tm' <- ssubst (zip xs gs) tm
+       if tm' == tm
+          then return tm
+          else varSubst (zip gs ts) tm'
   where ssubst :: MonadThrow m => HOLTermEnv -> HOLTerm -> m HOLTerm
         ssubst [] t = return t
         ssubst env t = 
@@ -323,16 +276,18 @@ subst ilist tm =
 
   * The variable is free in the body of the abstraction.
 -}
-alpha :: (MonadCatch m, MonadThrow m) => HOLTerm -> HOLTerm -> m HOLTerm
+alpha :: MonadCatch m => HOLTerm -> HOLTerm -> m HOLTerm
 alpha v@(Var _ ty) tm@(Abs v0@(Var _ ty0) bod)
     | v == v0 = return tm
-    | ty /= ty0 = throwM $! HOLTermError tm 
-          "alpha: types of variables not equal."
-    | v `varFreeIn` bod = throwM $! HOLTermError tm 
-          "alpha: variable free in body of abstraction."
-    | otherwise = (mkAbs v =<< varSubst [(v0, v)] bod) <?> 
-                    "alpha: construction of abstraction failed."
-alpha tm Abs{} = throwM $! HOLTermError tm "alpha: first term not a variable."
+    | ty /= ty0 =
+        throwM $! HOLTermError tm "alpha: types of variables not equal."
+    | v `varFreeIn` bod =
+        throwM $! HOLTermError tm "alpha: variable free in body of abstraction."
+    | otherwise =
+        (mkAbs v =<< varSubst [(v0, v)] bod) <?> 
+          "alpha: construction of abstraction failed."
+alpha v Abs{} = 
+    throwM $! HOLTermError v "alpha: first term not a variable."
 alpha _ tm = throwM $! HOLTermError tm "alpha: second term not an abstraction."
 
 {-|
@@ -349,21 +304,21 @@ alpha _ tm = throwM $! HOLTermError tm "alpha: second term not an abstraction."
 alphaTyabs :: MonadThrow m => HOLType -> HOLTerm -> m HOLTerm
 alphaTyabs ty@(TyVar True _) tm@(TyAbs ty0 bod)
     | ty == ty0 = return tm
-    | ty `elem` typeVarsInTerm bod = throwM $! HOLTermError tm 
-          "alphaTyabs: type free in body of type abstraction."
+    | ty `elem` typeVarsInTerm bod =
+        throwM $! HOLTermError tm 
+                    "alphaTyabs: type free in body of type abstraction."
     | otherwise = mkTyAbs ty $ inst [(ty0, ty)] bod
-alphaTyabs ty TyAbs{} = throwM $! HOLTypeError ty
-    "alphaTyabs: type not a small type variable."
-alphaTyabs _ tm = throwM $! HOLTermError tm 
-    "alphaTyabs: term not a type abstraction."
+alphaTyabs ty TyAbs{} = 
+    throwM $! HOLTypeError ty "alphaTyabs: type not a small type variable."
+alphaTyabs _ tm = 
+    throwM $! HOLTermError tm "alphaTyabs: term not a type abstraction."
 
 -- searching for terms
 {-| 
   Searches a term for a subterm that satisfies a given predicate.  
   Fails if no such term is found.
 -}
-findTerm :: (MonadCatch m, MonadThrow m) => (HOLTerm -> Bool) -> HOLTerm 
-         -> m HOLTerm
+findTerm :: MonadCatch m => (HOLTerm -> Bool) -> HOLTerm -> m HOLTerm
 findTerm p tm
     | p tm = return tm
     | otherwise =
@@ -375,8 +330,7 @@ findTerm p tm
           _ -> fail' "findTerm"
 
 -- | The monadic version of 'findTerm'.
-findTermM :: (MonadCatch m, MonadThrow m) 
-          => (HOLTerm -> m Bool) -> HOLTerm -> m HOLTerm
+findTermM :: MonadCatch m => (HOLTerm -> m Bool) -> HOLTerm -> m HOLTerm
 findTermM p tm =
     do c <- p tm 
        if c
@@ -402,11 +356,10 @@ findTerms p = findRec []
                 _ -> tl'
 
 -- | The monadic version of 'findTerms'.
-findTermsM :: forall m. (MonadCatch m, MonadThrow m) 
+findTermsM :: forall m. MonadCatch m 
            => (HOLTerm -> m Bool) -> HOLTerm -> m [HOLTerm]
 findTermsM p = findRec []
-  where findRec :: (MonadCatch m, MonadThrow m) 
-                => [HOLTerm] -> HOLTerm -> m [HOLTerm]
+  where findRec :: [HOLTerm] -> HOLTerm -> m [HOLTerm]
         findRec tl tm =
             do c <- p tm <|> return False
                let tl' = if c then insert tm tl else tl
@@ -436,8 +389,7 @@ findTermsM p = findRec []
 
   Fails with 'Nothing' if there is no satisfying subterm.
 -}
-findPath :: (MonadCatch m, MonadThrow m) 
-         => (HOLTerm -> Bool) -> HOLTerm -> m String
+findPath :: MonadCatch m => (HOLTerm -> Bool) -> HOLTerm -> m String
 findPath p tm
     | p tm = return []
     | otherwise =
@@ -602,49 +554,17 @@ stripAbs = splitList destAbs
 stripTyAbs :: HOLTerm -> ([HOLType], HOLTerm)
 stripTyAbs = splitList destTyAbs
 
--- matching version of mkConst
-{-|
-  Constructs an instance of a constant of the provided name and type.  Relies
-  internally on 'typeMatch' in order to provide a match between the most general
-  type of the constant and the provided type.  Throws a 'HOLException' in the
-  following cases:
-
-  * The provided string is not the name of a defined constant.
-
-  * Type matching fails.
--}
-mkMConst :: Text -> HOLType -> HOL cls thry HOLTerm
-mkMConst name ty = 
-  do uty <- getConstType name <?> "mkMConst: not a constant name"
-     (mkConstFull name =<< typeMatch uty ty ([], [], [])) <?>
-       "mkMConst: generic type cannot be instantiated"
-
 {-|
   A version of 'mkComb' that instantiates the type variables in the left hand
   argument.  Relies internally on 'typeMatch' in order to provide a match
   between the domain type of the function and the type of the argument.  Fails
   with 'Nothing' if instantiation is impossible.
 -}
-mkIComb :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
+mkIComb :: MonadCatch m => HOLTerm -> HOLTerm -> m HOLTerm
 mkIComb tm1 tm2 =
     do (ty, _) <- destFunTy $ typeOf tm1
        mat <- typeMatch ty (typeOf tm2) ([], [], [])
        mkComb (instFull mat tm1) tm2
-
-{-|
-  An iterative version of 'mkIComb' that builds a complex combination given a
-  constant name and a list of arguments, attempting to find a correct
-  instantiation at every step.  Throws a 'HOLException' in the following cases:
-
-  * The provided name is not a currently defiend constant.
-
-  * Any internal call to mkIComb fails.
--}
-listMkIComb :: Text -> [HOLTerm] -> HOL cls thry HOLTerm
-listMkIComb cname args =
-    do cnst <- mkConst cname ([]::HOLTypeEnv) <?> 
-                 "listMkIComb: not a constant name"
-       foldlM mkIComb cnst args <?> "listMkIComb: type cannot be instantiated"
                                           
 -- syntax for binary operators
 {-| 
@@ -666,57 +586,44 @@ isBinop _ _ = False
   specified operator name.
 -}
 destBinary :: MonadThrow m => Text -> HOLTerm -> m (HOLTerm, HOLTerm)
-destBinary s tm@(Comb (Comb (Const s' _) l) r)
+destBinary s tm@(Binary s' l r)
     | s == s' = return (l, r)
-    | otherwise = throwM $! HOLTermError tm 
-          "destBinary: operator does not match."
-destBinary _ tm = throwM $! HOLTermError tm 
-    "destBinary: not a binary application."
+    | otherwise = 
+        throwM $! HOLTermError tm "destBinary: operator does not match."
+destBinary _ tm = 
+    throwM $! HOLTermError tm "destBinary: not a binary application."
 
 -- | The pattern synonym equivalent of 'destBinary'.
-pattern Binary op l r <- Comb (Comb op l) r
-
--- | A version of 'Binary' that matches a symbol instead of an entire operator.
-pattern Binary' s l r <- Comb (Comb (Const s _) l) r
+pattern Binary :: Text -> HOLTerm -> HOLTerm -> HOLTerm
+pattern Binary s l r <- Comb (Comb (Const s _) l) r
 
 -- | A version of 'destBinary' that tests for operator terms, not strings.
 destBinop :: MonadThrow m => HOLTerm -> HOLTerm -> m (HOLTerm, HOLTerm)
-destBinop op tm@(Comb (Comb op' l) r)
+destBinop op tm@(Binop op' l r)
     | op' == op = return (l, r)
-    | otherwise = throwM $! HOLTermError tm 
-          "destBinop: operator does not match."
+    | otherwise = 
+        throwM $! HOLTermError tm "destBinop: operator does not match."
 destBinop _ tm = throwM $! HOLTermError tm "destBinop: not a binop application."
 
-{-|
-  Constructs a binary application given a constant name and two argument terms.
-  Note that no instantiation is performed, thus the constant must be monomorphic
-  or the provided arguments must match the constant's general type.  Throws a
-  'HOLException' if any of the internal calls to 'mkConst' or 'mkComb' fail.
--}
-mkBinary :: Text -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkBinary s l r = 
-  (do c <- mkConst s ([]::HOLTypeEnv)
-      let c' = inst [(tyA, typeOf l), (tyB, typeOf r)] c
-      l' <- mkComb c' l
-      mkComb l' r)
-  <?> "mkBinary: " ++ show s
+-- | The pattern synonym equivalent of 'destBinop'.
+pattern Binop :: HOLTerm -> HOLTerm -> HOLTerm -> HOLTerm
+pattern Binop op l r <- Comb (Comb op l) r
 
 {-| 
   A version of 'mkBinary' that accepts the operator as a pre-constructed term.
 -}
-mkBinop :: (MonadCatch m, MonadThrow m) 
-        => HOLTerm -> HOLTerm -> HOLTerm -> m HOLTerm
-mkBinop op tm1 tm2 =
-    (do tm1' <- mkComb op tm1
-        mkComb tm1' tm2) <?> "mkBinop"
+mkBinop :: MonadCatch m => HOLTerm -> HOLTerm -> HOLTerm -> m HOLTerm
+mkBinop op tm1 tm2 = 
+    (do tm <- mkComb op tm1
+        mkComb tm tm2) <?> "mkBinop"
 
 {-| 
   Iteratively builds a complex combination using 'mkBinop', i.e.
  
   > listMkBinop (/\) [T, F, T] === T /\ F /\ T
 -} 
-listMkBinop :: (MonadCatch m, MonadThrow m) => HOLTerm -> [HOLTerm] -> m HOLTerm
-listMkBinop = foldr1M . mkBinop
+listMkBinop :: MonadCatch m => HOLTerm -> [HOLTerm] -> m HOLTerm
+listMkBinop op = foldr1M (mkBinop op)
 
 {-|
   The inverse of 'listMkBinop'.  Destructs a complex combination built with
@@ -724,8 +631,7 @@ listMkBinop = foldr1M . mkBinop
 -}
 binops :: HOLTerm -> HOLTerm -> [HOLTerm]
 binops = stripList . destBinop
-
--- syntax for complex abstractions
+                      
 -- | Predicate for generalized abstractions.  See 'mkGAbs' for more details.
 isGAbs :: HOLTerm -> Bool
 isGAbs = test' . destGAbs
@@ -762,17 +668,31 @@ destGAbs tm = throwM $! HOLTermError tm "destGAbs"
   abstraction with the specified binder name.
 -}
 destBinder :: MonadThrow m => Text -> HOLTerm -> m (HOLTerm, HOLTerm)
-destBinder s tm@(Comb (Const s' _) (Abs bv t))
+destBinder s tm@(Bind s' bv t)
     | s == s' = return (bv, t)
-    | otherwise = throwM $! HOLTermError tm "destBinder: binder does not match."
-destBinder _ tm = throwM $! HOLTermError tm 
-    "destBinder: not a binder application." 
+    | otherwise = 
+        throwM $! HOLTermError tm "destBinder: binder does not match."
+destBinder _ tm = 
+    throwM $! HOLTermError tm "destBinder: not a binder application." 
 
 -- | The pattern synonym equivalent of 'destBinder'.
+pattern Bind :: Text -> HOLTerm -> HOLTerm -> HOLTerm
 pattern Bind s bv tm <- Comb (Const s _) (Abs bv tm)
 
+{-|
+  A version of 'destBinder' that returns the body abstraction in its entirety.
+-}
+destBinderWhole :: MonadThrow m => Text -> HOLTerm -> m HOLTerm
+destBinderWhole s (BindWhole s' tm@Abs{})
+    | s == s' = return tm
+    | otherwise =
+        throwM $! HOLTermError tm "destBinderWhole: binder does not match."
+destBinderWhole _ tm =
+    throwM $! HOLTermError tm "destBinderWhole: not a binder application."
+
 -- | A version of 'Bind' that returns the body abstraction in its entirety.
-pattern Bind' s tm <- Comb (Const s _) tm
+pattern BindWhole :: Text -> HOLTerm -> HOLTerm
+pattern BindWhole s tm <- Comb (Const s _) tm
 
 {-|
   Destructs a type abstraction of specified binder name into its bound type
@@ -780,84 +700,31 @@ pattern Bind' s tm <- Comb (Const s _) tm
   a type abstraction with the specified type binder name.
 -}
 destTyBinder :: MonadThrow m => Text -> HOLTerm -> m (HOLType, HOLTerm)
-destTyBinder s tm@(Comb (Const s' _) (TyAbs bv t))
+destTyBinder s tm@(TyBind s' bv t)
     | s == s' = return (bv, t)
-    | otherwise = throwM $! HOLTermError tm 
-          "destTyBinder: binder does not match."
-destTyBinder _ tm = throwM $! HOLTermError tm
-    "destTyBinder: not a type binder application."
+    | otherwise = 
+        throwM $! HOLTermError tm "destTyBinder: binder does not match."
+destTyBinder _ tm = 
+    throwM $! HOLTermError tm "destTyBinder: not a type binder application."
 
 -- | The pattern synonym equivalent of 'destTyBinder'.
+pattern TyBind :: Text -> HOLType -> HOLTerm -> HOLTerm
 pattern TyBind s ty tm <- Comb (Const s _) (TyAbs ty tm)
 
+{-|
+  A version of 'destTyBinder' that returns the body abstraction in its entirety.
+-}
+destTyBinderWhole :: MonadThrow m => Text -> HOLTerm -> m HOLTerm
+destTyBinderWhole s (TyBindWhole s' tm@TyAbs{})
+    | s == s' = return tm
+    | otherwise =
+        throwM $! HOLTermError tm "destTyBinderWhole: binder does not match."
+destTyBinderWhole _ tm =
+   throwM $! HOLTermError tm "destTyBinderWhole: not a type binder application."
+
 -- | A version of 'TyBind' that returns the body abstraction in its entirety.
-pattern TyBind' s tm <- Comb (Const s _) tm
-
-{-|
-  Constructor for generalized abstractions.  Generalized abstractions extend
-  term abstractions to the more general of notion of a function mapping some
-  structure to some term.  This allows us to bind patterns more complicated
-  than a variable, i.e. binding pairs
-
-  > \ (x:num, y:num) -> x + y
-
-  or lists
-
-  > \ CONS x xs -> x
-
-  Note that in the case where the pattern to bind is simply a variable 'mkGAbs'
-  just calls 'mkAbs'.
--}
-mkGAbs :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkGAbs tm1@Var{} tm2 =
-    mkAbs tm1 tm2 <?> "mkGAbs: simple abstraction failed"
-mkGAbs tm1 tm2 = 
-    let fvs = frees tm1 in
-      (do fTy <- mkFunTy (typeOf tm1) $ typeOf tm2
-          let f = variant (frees tm1++frees tm2) $ mkVar "f" fTy
-          tm1' <- mkComb f tm1
-          bodIn <- listMkForall fvs =<< mkGEq tm1' tm2
-          bndr <- mkConst "GABS" [(tyA, fTy)]
-          mkComb bndr =<< mkAbs f bodIn)
-      <?> "mkGAbs"
-  where mkGEq :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-        mkGEq t1 t2 = 
-          do p <- mkConst "GEQ" [(tyA, typeOf t1)]
-             mkBinop p t1 t2
-
-{-|
-  Constructs an abstraction given a binder name and two argument terms.  Throws
-  a 'HOLException' if any of the internal calls to 'mkConst', 'mkAbs', or 
-  'mkComb' fail.
-
-  Note that the given string can actually be any constant name of type 
-  @(A -> *) -> *@, such that a well-typed term of the form @c (\\x . t)@ can be
-  produced.
--}
-mkBinder :: Text -> HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkBinder op v tm = 
-    (do c <- mkConst op [(tyA, typeOf v)]
-        mkComb c =<< mkAbs v tm)
-    <?> "mkBinder: " ++ show op
-
-{-|
-  Constructs a type abstraction given a type binder name, a type variable to
-  find, and a body term.  Throws a 'HOLException' if any of the internal calls
-  to 'mkConst', 'mkTyAbs', or 'mkComb' fail.
-
-  Note that the given string can actually be any constant name of type
-  @(% 'a . *) -> *@, such that a well-typed term of the form @c (\\\\x . t)@ can
-  be produced.
--}
-mkTyBinder :: Text -> HOLType -> HOLTerm -> HOL cls thry HOLTerm
-mkTyBinder op v tm =
-  (do c <- mkConst op ([]::HOLTypeEnv)
-      mkComb c =<< mkTyAbs v tm)
-  <?> "mkTyBinder: " ++ show op
-
--- | A specific version of 'listMkAbs' for general abstractions.
-listMkGAbs :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-listMkGAbs = flip (foldrM mkGAbs)
+pattern TyBindWhole :: Text -> HOLTerm -> HOLTerm
+pattern TyBindWhole s tm <- Comb (Const s _) tm
 
 -- | A specific version of 'stripAbs' for general abstractions.
 stripGAbs :: HOLTerm -> ([HOLTerm], HOLTerm)
@@ -912,27 +779,31 @@ destIff (Comb (Comb (Const "=" (TyBool :-> _)) l) r) = return (l, r)
 destIff tm = throwM $! HOLTermError tm "destIff"
 
 -- | The pattern synonym equivalent of 'destIff'.
+pattern (:<=>) :: HOLTerm -> HOLTerm -> HOLTerm
 pattern l :<=> r <- Comb (Comb (Const "=" (TyBool :-> _)) l) r
 
 -- | Destructor for boolean conjunctions.
-destConj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
+destConj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm) 
 destConj = destBinary "/\\"
 
 -- | The pattern synonym equivalent of 'destConj'.
-pattern l :/\ r <- Binary' "/\\" l r
+pattern (:/\) :: HOLTerm -> HOLTerm -> HOLTerm
+pattern l :/\ r <- Binary "/\\" l r
 
 -- | Destructor for boolean implications.
 destImp :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destImp = destBinary "==>"
 
 -- | The pattern synonym equivalent of 'destImp'.
-pattern l :==> r <- Binary' "==>" l r
+pattern (:==>) :: HOLTerm -> HOLTerm -> HOLTerm
+pattern l :==> r <- Binary "==>" l r
 
 -- | Destructor for universal term quantification.
 destForall :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destForall = destBinder "!"
 
 -- | The pattern synonym equivalent of 'destForall'.
+pattern Forall :: HOLTerm -> HOLTerm -> HOLTerm
 pattern Forall bv tm <- Bind "!" bv tm
 
 -- | Destructor for existential term quantification.
@@ -940,6 +811,7 @@ destExists :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destExists = destBinder "?"
 
 -- | The pattern synonym equivalent of 'destExists'.
+pattern Exists :: HOLTerm -> HOLTerm -> HOLTerm
 pattern Exists bv tm <- Bind "?" bv tm
 
 -- | Destructor for boolean disjunctions.
@@ -947,7 +819,8 @@ destDisj :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destDisj = destBinary "\\/"
 
 -- | The pattern synonym equivalent of 'destDisj'.
-pattern l :\/ r <- Binary' "\\/" l r
+pattern (:\/) :: HOLTerm -> HOLTerm -> HOLTerm
+pattern l :\/ r <- Binary "\\/" l r
 
 -- | Destructor for boolean negations.
 destNeg :: MonadThrow m => HOLTerm -> m HOLTerm
@@ -955,6 +828,7 @@ destNeg (Comb (Const "~" _) p) = return p
 destNeg tm = throwM $! HOLTermError tm "destNeg"
 
 -- | The pattern synonym equivalent of 'destNeg'.
+pattern Neg :: HOLTerm -> HOLTerm
 pattern Neg tm <- (Comb (Const "~" _) tm)
 
 -- | Destructor for unique, existential quantification.
@@ -962,6 +836,7 @@ destUExists :: MonadThrow m => HOLTerm -> m (HOLTerm, HOLTerm)
 destUExists = destBinder "?!"
 
 -- | The pattern synonym equivalent of 'destUExists'.
+pattern UExists :: HOLTerm -> HOLTerm -> HOLTerm
 pattern UExists bv tm <- Bind "?!" bv tm
 
 -- | Destructor for term-level universal type quantification.
@@ -969,6 +844,7 @@ destTyAll :: MonadThrow m => HOLTerm -> m (HOLType, HOLTerm)
 destTyAll = destTyBinder "!!"
 
 -- | The pattern synonym equivalent of 'destTyAll'.
+pattern TyAll :: HOLType -> HOLTerm -> HOLTerm
 pattern TyAll ty tm <- TyBind "!!" ty tm
 
 -- | Destructor for term-level existential type quantification.
@@ -976,100 +852,8 @@ destTyEx :: MonadThrow m => HOLTerm -> m (HOLType, HOLTerm)
 destTyEx = destTyBinder "??"
 
 -- | The pattern synonym equivalent of 'destTyEx'.
+pattern TyEx :: HOLType -> HOLTerm -> HOLTerm
 pattern TyEx ty tm <- TyBind "??" ty tm
-
-{-|
-  Constructor for boolean conjunctions.  Throws a 'HOLException' if the internal
-  calls to 'mkComb' fail.
--}
-mkIff :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkIff l r =
-    (do bicond <- mkConst "=" [(tyA, tyBool)]
-        l' <- mkComb bicond l
-        mkComb l' r)
-    <?> "mkIff"
-
-{-|
-  Constructor for boolean conjunctions.  Throws a 'HOLException' if the internal
-  call to 'mkBinary' fails.
--}
-mkConj :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkConj = mkBinary "/\\"
-
-{-|
-  Constructor for boolean implications.  Throws a 'HOLException' if the internal
-  call to 'mkBinary' fails.
--}
-mkImp :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkImp = mkBinary "==>"
-
-{-| 
-  Constructor for universal term quantification.  Throws a 'HOLException' if the
-  internal call to 'mkBinder' fails.
--}
-mkForall :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkForall = mkBinder "!"
-
-{-| 
-  Constructor for existential term quantification.  Throws a 'HOLException' if 
-  the internal call to 'mkBinder' fails.
--}
-mkExists :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkExists = mkBinder "?"
-
-{-|
-  Constructor for boolean disjunctions.  Throws a 'HOLException' if the internal
-  call to 'mkBinary' fails.
--}
-mkDisj :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkDisj = mkBinary "\\/"
-
-{-|
-  Constructor for boolean negations.  Throws a 'HOLException' if any of the 
-  internal calls to 'mkConst' or 'mkComb' fail.
--}
-mkNeg :: HOLTerm -> HOL cls thry HOLTerm
-mkNeg tm = 
-    (do c <- mkConst "~" ([]::HOLTypeEnv)
-        mkComb c tm)
-    <?> "mkNeg"
-
-{-| 
-  Constructor for unique, existential term quantification.  Throws a 
-  'HOLException' if the internal call to 'mkBinder' fails.
--}
-mkUExists :: HOLTerm -> HOLTerm -> HOL cls thry HOLTerm
-mkUExists = mkBinder "?!"
-
-{-|
-  Constructor for term-level universal type quantification.  Throws a 
-  'HOLException' if the internal call to 'mkTyBinder' fails.
--}
-mkTyAll :: HOLType -> HOLTerm -> HOL cls thry HOLTerm
-mkTyAll = mkTyBinder "!!"
-
-{-|
-  Constructor for term-level existential type quantification.  Throws a 
-  'HOLException' if the internal call to 'mkTyBinder' fails.
--}
-mkTyEx :: HOLType -> HOLTerm -> HOL cls thry HOLTerm
-mkTyEx = mkTyBinder "??"
-
--- | Constructs a complex conjunction from a given list of propositions.
-listMkConj :: [HOLTerm] -> HOL cls thry HOLTerm
-listMkConj = foldr1M mkConj
-
--- | A specific version of 'listMkAbs' for universal term quantification.
-listMkForall :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-listMkForall = flip (foldrM mkForall)
-
--- | A specific version of 'listMkAbs' for existential term quantification.
-listMkExists :: [HOLTerm] -> HOLTerm -> HOL cls thry HOLTerm
-listMkExists vs bod = foldrM mkExists bod vs
-
--- | Constructs a complex disjunction from a given list of propositions.
-listMkDisj :: [HOLTerm] -> HOL cls thry HOLTerm
-listMkDisj = foldr1M mkDisj
 
 -- | Returns the list of propositions in a complex conjunction.
 conjuncts :: HOLTerm -> [HOLTerm]
@@ -1123,12 +907,12 @@ destCons = destBinary "CONS"
 
   > x1 `CONS` .... xn `CONS` NIL
 -}
-destList :: MonadThrow m => HOLTerm -> m [HOLTerm]
+destList :: MonadCatch m => HOLTerm -> m [HOLTerm]
 destList tm =
-    let (tms, nil) = splitList destCons tm in
-      case nil of
-        (Const "NIL" _) -> return tms
-        _ -> throwM $! HOLTermError tm "destList"
+    do (tms, nil) <- splitListM destCons tm 
+       case nil of
+         (Const "NIL" _) -> return tms
+         _ -> throwM $! HOLTermError tm "destList"
 
 {-|
   Destructs a let binding term into a list of its name and value pairs and its
@@ -1146,20 +930,6 @@ destLet tm =
           Comb (Const "LET_END" _) bod -> return (eqs, bod)
           _ -> throwM $! HOLTermError tm "destLet: missing LET_END."
     _ -> throwM $! HOLTermError tm "destLet: missing LET."
-
-{-|
-  Constructs a let binding term provided a list of variable/value pairs and a
-  body term.
--}
-mkLet :: [(HOLTerm, HOLTerm)] -> HOLTerm -> HOL cls thry HOLTerm
-mkLet assigs bod =
-    do tmLetEnd <- mkConst "LET_END" [(tyA, typeOf bod)]
-       let (ls, rs) = unzip assigs
-       lend <- mkComb tmLetEnd bod
-       lbod <- listMkGAbs ls lend
-       (ty1, ty2) <- destFunTy $ typeOf lbod
-       tmLet <- mkConst "LET" [(tyA, ty1), (tyB, ty2)]
-       listMkComb tmLet (lbod:rs)
 
 {-|
   Converts a numeral term to an 'Integer'.  

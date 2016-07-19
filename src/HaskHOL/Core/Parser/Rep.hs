@@ -19,7 +19,7 @@ module HaskHOL.Core.Parser.Rep where
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
+import HaskHOL.Core.State.Monad
 
 import HaskHOL.Core.Ext.Protected
 
@@ -52,12 +52,6 @@ instance HOLTypeRep Text cls thry where
                  pty <- holTypeParser ctxt x
                  tyElab ctxt pty
 
-instance {-# OVERLAPPABLE #-} (MonadThrow m, m ~ Catch) => 
-         HOLTypeRep (m HOLType) cls thry where
-    toHTy m = case runCatch m of
-                Right res -> return res
-                Left err  -> throwM err
-
 instance HOLTypeRep (PType thry) cls thry where
     toHTy = serve
 
@@ -68,8 +62,8 @@ instance HOLTypeRep PreType cls thry where
 instance HOLTypeRep HOLType cls thry where
     toHTy = return
 
-instance {-# OVERLAPPING #-} (cls1 ~ cls2, thry1 ~ thry2) => 
-         HOLTypeRep (HOL cls thry HOLType) cls thry where
+instance (cls1 ~ cls2, thry1 ~ thry2) => 
+         HOLTypeRep (HOL cls1 thry1 HOLType) cls2 thry2 where
     toHTy = id
 
 -- Terms
@@ -94,12 +88,6 @@ instance HOLTermRep Text cls thry where
                  ptm <- holTermParser ctxt x
                  elab ctxt ptm
 
-instance {-# OVERLAPPABLE #-} (MonadThrow m, m ~ Catch) => 
-         HOLTermRep (m HOLTerm) cls thry where
-    toHTm m = case runCatch m of
-                Right res -> return res
-                Left err  -> throwM err
-
 instance HOLTermRep (PTerm thry) cls thry where
     toHTm = serve
                 
@@ -110,7 +98,7 @@ instance HOLTermRep PreTerm cls thry where
 instance  HOLTermRep HOLTerm cls thry where
     toHTm = return
 
-instance {-# OVERLAPPING #-} (cls1 ~ cls2, thry1 ~ thry2) => 
+instance (cls1 ~ cls2, thry1 ~ thry2) => 
          HOLTermRep (HOL cls1 thry1 HOLTerm) cls2 thry2 where
     toHTm = id
 
@@ -131,18 +119,9 @@ class HOLThmRep a cls thry where
     -- | Conversion from alternative type @a@ to 'HOLThm'.
     toHThm :: a -> HOL cls thry HOLThm
 
-instance {-# OVERLAPPABLE #-} (MonadThrow m, m ~ Catch) => 
-         HOLThmRep (m HOLThm) cls thry where
-    toHThm m = case runCatch m of
-                 Right res -> return res
-                 Left err  -> throwM err
-
-instance HOLThmRep (PThm thry) cls thry where
-    toHThm = serve
-
 instance HOLThmRep HOLThm cls thry where
     toHThm = return
 
-instance {-# OVERLAPPING #-} (cls1 ~ cls2, thry1 ~ thry2) => 
+instance (cls1 ~ cls2, thry1 ~ thry2) => 
          HOLThmRep (HOL cls1 thry1 HOLThm) cls2 thry2 where
     toHThm = id

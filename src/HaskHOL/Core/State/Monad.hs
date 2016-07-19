@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
 {-# LANGUAGE ConstraintKinds, DataKinds, EmptyDataDecls, ScopedTypeVariables, 
              TypeFamilies, TypeOperators, UndecidableInstances #-}
 {-|
@@ -52,7 +52,6 @@ module HaskHOL.Core.State.Monad
     , openLocalStateHOLBase
     , closeAcidStateHOL
     , updateHOL
-    , updateHOLUnsafe
     , queryHOL
       -- * Benign Flag Methods
     , setBenignFlag
@@ -81,16 +80,16 @@ import HaskHOL.Core.Kernel.Prims
 import Data.Typeable
 import qualified Control.Exception as E
 import Data.IORef
-import GHC.Prim (Constraint)
+import GHC.Exts (Constraint)
 import qualified Data.HashMap.Strict as Hash
 import Data.Hashable
 import Data.Acid hiding (makeAcidic, Query, Update)
 import qualified Data.Text.Lazy as T
-import Text.PrettyPrint.Free
+import Text.PrettyPrint.ANSI.Leijen
 import System.IO.Unsafe (unsafePerformIO)
 
 -- TH imports
-import Language.Haskell.TH
+import Language.Haskell.TH hiding (OverloadedStrings, QuasiQuotes)
 import Language.Haskell.TH.Syntax (lift, Module(..), modString)
 
 -- Path Handling imports
@@ -367,9 +366,11 @@ instance MonadCatch (HOL cls thry) where
 instance MonadMask (HOL cls thry) where
     mask m = HOL $ \ ref st mods -> E.mask $ \ restore ->
         runHOLUnsafe (m $ lft restore) ref st mods
-      where lft :: (IO a -> IO a) -> HOL cls thry a -> HOL cls thry a
-            lft rst (HOL x) = HOL $ \ ref st mods -> rst $ x ref st mods
-    uninterruptibleMask = undefined
+    uninterruptibleMask m = HOL $ \ ref st mods -> E.uninterruptibleMask $ 
+        \ restore -> runHOLUnsafe (m $ lft restore) ref st mods
+
+lft :: (IO a -> IO a) -> HOL cls thry a -> HOL cls thry a
+lft rst (HOL x) = HOL $ \ ref st mods -> rst $ x ref st mods
 
 -- Theory Contexts
 data InnerThry
@@ -490,7 +491,7 @@ extendTheory old modname m =
 {-| 
   A version of 'putDoc' lifted to the 'HOL' monad for use with pretty printers.
 -}
-putDocHOL :: Doc a -> HOL cls thry ()
+putDocHOL :: Doc -> HOL cls thry ()
 putDocHOL x = HOL $ \ _ _ _ -> putDoc x >> putStr "\n"
 
 -- | A version of 'putStr' lifted to the 'HOL' monad.
@@ -562,8 +563,7 @@ openLocalStateHOLBase :: (Typeable st, IsAcidic st) => st
 openLocalStateHOLBase ast = HOL $ \ _ _ _ -> openLocalState' ast ""
 
 -- | A wrapper to 'closeAcidState' for the 'HOL' monad.
-closeAcidStateHOL :: (SafeCopy st, Typeable st) => AcidState st 
-                  -> HOL cls thry ()
+closeAcidStateHOL :: AcidState st -> HOL cls thry ()
 closeAcidStateHOL ast = HOL $ \ _ _ _ -> closeAcidState ast
 
 
@@ -728,8 +728,8 @@ newFlag :: String -> Bool -> Q [Dec]
 newFlag flag val =
     do val' <- lift val
        let name = mkName flag
-           ty = DataD [] name [] [NormalC name []] [''Typeable]
-           cls = InstanceD [] (AppT (ConT ''BenignFlag) (ConT name)) 
+           ty = DataD [] name [] Nothing [NormalC name []] [ConT ''Typeable]
+           cls = InstanceD Nothing [] (AppT (ConT ''BenignFlag) (ConT name)) 
                    [FunD 'initFlagValue [Clause [WildP] (NormalB val') []]]
        return [ty, cls]
 

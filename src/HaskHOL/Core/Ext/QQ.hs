@@ -34,9 +34,8 @@ import HaskHOL.Core.Ext.Protected
   of this module, i.e. runIO
 -}
 import Language.Haskell.TH
-import Language.Haskell.TH.Lift
 import Language.Haskell.TH.Quote
-
+import Language.Haskell.TH.Syntax
 
 {-|
   This is the base quasi-quoter for the HaskHOL system.  When provided with a

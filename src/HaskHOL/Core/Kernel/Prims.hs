@@ -1,6 +1,5 @@
-{-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, GADTs, PatternSynonyms, 
-             TemplateHaskell #-}
+{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, DeriveLift, GADTs, 
+             PatternSynonyms, StandaloneDeriving, TemplateHaskell #-}
 
 {-|
   Module:    HaskHOL.Core.Kernel.Prims
@@ -62,15 +61,14 @@ module HaskHOL.Core.Kernel.Prims
 import Control.DeepSeq (NFData, rnf)
 import Control.Monad.Catch (Exception)
 
-import Data.SafeCopy (deriveSafeCopy, base)
-import Data.Typeable (Typeable)
 import Data.Hashable
+import Data.SafeCopy (deriveSafeCopy, base)
 import Data.Text.Lazy (Text)
 
 import GHC.Generics
 
-import Language.Haskell.TH.Lift
-import Instances.TH.Lift()
+import Instances.TH.Lift ()
+import Language.Haskell.TH.Syntax
 
 {-
   A quick note on how the primitive data types of HaskHOL are implemented -- 
@@ -103,22 +101,25 @@ data HOLType
     = TyVarIn !Bool    !Text
     | TyAppIn !TypeOp  ![HOLType]
     | UTypeIn !HOLType !HOLType
-    deriving (Eq, Ord, Typeable, Generic)
+    deriving (Eq, Ord, Generic, Lift)
 
 instance Hashable HOLType
 
 -- | A type variable consisting of a constraint flag and name.
+pattern TyVar :: Bool -> Text -> HOLType
 pattern TyVar b s <- TyVarIn b s
     
 {-| 
   A type application consisting of a type operator and a list of type
   arguments.  See 'TypeOp' for more details.
 -}
+pattern TyApp :: TypeOp -> [HOLType] -> HOLType
 pattern TyApp op tys <- TyAppIn op tys
 {-| 
   A universal type consisting of a bound type and a body type.  Note that 
   the bound type must be a small, type variable.
 -}
+pattern UType :: HOLType -> HOLType -> HOLType
 pattern UType tv bod <- UTypeIn tv bod
 
 {-|
@@ -132,17 +133,20 @@ data TypeOp
     = TyOpVarIn     !Text
     | TyPrimitiveIn !Text !Int
     | TyDefinedIn   !Text !Int !Int -- Hash of concl of thm
-    deriving (Eq, Ord, Typeable, Generic)
+    deriving (Eq, Ord, Generic, Lift)
 
 instance Hashable TypeOp
 
 -- | A type operator variable consisting of a name.
+pattern TyOpVar :: Text -> TypeOp
 pattern TyOpVar s <- TyOpVarIn s
 
 -- | A type operator primitive consisting of a name and arity.
+pattern TyPrimitive :: Text -> Int -> TypeOp
 pattern TyPrimitive s n <- TyPrimitiveIn s n
 
 -- | A defined type operator consisting of a name and arity.
+pattern TyDefined :: Text -> Int -> TypeOp
 pattern TyDefined s n <- TyDefinedIn s n _
 
 {-
@@ -214,38 +218,44 @@ data HOLTerm
     | AbsIn    !HOLTerm  !HOLTerm
     | TyCombIn !HOLTerm  !HOLType
     | TyAbsIn  !HOLType  !HOLTerm
-    deriving (Eq, Ord, Typeable, Generic)
+    deriving (Eq, Ord, Generic, Lift)
 
 instance Hashable HOLTerm
 
 -- | A term variable consisting of a name and type.
+pattern Var :: Text -> HOLType -> HOLTerm
 pattern Var s ty <- VarIn s ty 
 
 {-| 
   A term constant consisting of a name, type, and tag.  See 'ConstTag' for 
   more information.
 -}
+pattern Const :: Text -> HOLType -> HOLTerm
 pattern Const s ty <- ConstIn s ty _
 
 -- | A term application consisting of a function term and argument term.
+pattern Comb :: HOLTerm -> HOLTerm -> HOLTerm
 pattern Comb l r <- CombIn l r
     
 {-| 
   A term abstraction consisting of a bound term and a body term.  Note that
   the bound term must be a type variable.
 -}
+pattern Abs :: HOLTerm -> HOLTerm -> HOLTerm
 pattern Abs bv bod <- AbsIn bv bod
 
 {-| 
   A term-level, type application consisting of a body term and an argument 
   type. Note that the body term must have a universal type.
 -}
+pattern TyComb :: HOLTerm -> HOLType -> HOLTerm
 pattern TyComb tm ty <- TyCombIn tm ty
     
 {-| 
   A term-level, type abstraction consisting of a bound type and a body term.
   Note that the bound type must be a small, type variable.
 -}
+pattern TyAbs :: HOLType -> HOLTerm -> HOLTerm
 pattern TyAbs ty tm <- TyAbsIn ty tm
    
 {-| 
@@ -259,24 +269,28 @@ data ConstTag
     | DefinedIn      !Int            -- hash
     | MkAbstractIn   !Text !Int !Int -- name, arity, hash
     | DestAbstractIn !Text !Int !Int -- name, arity, hash
-    deriving (Eq, Ord, Typeable, Generic)
+    deriving (Eq, Ord, Generic, Lift)
 
 instance Hashable ConstTag
 
 -- | A primitive constant tag.
+pattern Primitive :: ConstTag
 pattern Primitive <- PrimitiveIn
 
 -- | A defined constant tag.
+pattern Defined :: ConstTag
 pattern Defined <- DefinedIn _
 
 {-| A defined constant tag for type construction consisting of a name and 
     arity.
 -}
+pattern MkAbstract :: Text -> Int -> ConstTag
 pattern MkAbstract s n <- MkAbstractIn s n _
 
 {-| A defined constant tag for type destruction consisting of a name and 
     arity.
 -}
+pattern DestAbstract :: Text -> Int -> ConstTag
 pattern DestAbstract s n <- DestAbstractIn s n _
 
 instance Show ConstTag where
@@ -297,11 +311,12 @@ type HOLTermEnv = [(HOLTerm, HOLTerm)]
   Axioms can be tracked once the stateful layer of the prover is introduced,
   though.  For more details see the documentation for `newAxiom`.
 -}
-data HOLThm = ThmIn ![HOLTerm] !HOLTerm deriving (Eq, Ord, Typeable, Generic)
+data HOLThm = ThmIn ![HOLTerm] !HOLTerm deriving (Eq, Ord, Generic, Lift)
         
 instance Hashable HOLThm
 
 -- | The pattern synonym for HOL theorems.
+pattern Thm :: [HOLTerm] -> HOLTerm -> HOLThm
 pattern Thm as c <- ThmIn as c
 
 -- Error types
@@ -365,5 +380,3 @@ deriveSafeCopy 0 'base ''HOLType
 deriveSafeCopy 0 'base ''ConstTag
 deriveSafeCopy 0 'base ''HOLTerm
 deriveSafeCopy 0 'base ''HOLThm
-
-deriveLiftMany [''TypeOp, ''HOLType, ''ConstTag, ''HOLTerm, ''HOLThm]

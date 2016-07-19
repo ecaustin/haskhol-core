@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Printer
   Copyright: (c) Evan Austin 2015
@@ -48,7 +49,7 @@ import Prelude hiding ((<$>))
 import HaskHOL.Core.Lib hiding (ask, base)
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State
-import HaskHOL.Core.Basics
+import HaskHOL.Core.Basics hiding (destNumeral, destComb)
 
 import HaskHOL.Core.Printer.Prims
 
@@ -58,8 +59,7 @@ import Data.STRef
 import Control.Monad.Trans
 import Control.Monad.Trans.Reader
 
-import Text.PrettyPrint.Free
-import System.Console.Terminfo.PrettyPrint
+import Text.PrettyPrint.ANSI.Leijen
 
 {-| 
   The computational monad for our pretty-printer.  
@@ -192,7 +192,7 @@ prebrokenBinops :: PrintM s [Text]
 prebrokenBinops = viewPrintState $ view (printCtxt . prebroken)
 
 -- | Pretty printer for 'HOLType's.
-ppType :: HOLType -> PrintM s TermDoc
+ppType :: HOLType -> PrintM s Doc
 ppType (TyVar False x) = return $! pretty x
 ppType (TyVar True x) = return . pretty $ '\'' `cons` x
 ppType ty =
@@ -228,7 +228,7 @@ ppType ty =
                        (bin, args) -> 
                            do args' <- mapM (\ x -> setPrec 0 >> ppType x) args
                               return $! ppTypeApp "," True args' <+> pretty bin
-  where ppTypeApp :: String -> Bool -> [TermDoc] -> TermDoc
+  where ppTypeApp :: String -> Bool -> [Doc] -> Doc
         ppTypeApp sepr flag ds =
             case tryFoldr1 (\ x y -> x <+> text sepr <+> y) ds of
               Nothing -> empty
@@ -237,7 +237,7 @@ ppType ty =
 
 -- Printer for Terms
 -- | Pretty printer for 'HOLTerm's.
-ppTerm :: HOLTerm -> PrintM s TermDoc
+ppTerm :: HOLTerm -> PrintM s Doc
 ppTerm tm =
 -- numeral case
     (pretty `fmap` destNumeral tm) <|>
@@ -276,7 +276,7 @@ ppTerm tm =
                           (ppComb =<< destComb tm) <|>
                           fail' "ppTerm: printer error - unrecognized term"     
 
-ppBinders :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s TermDoc
+ppBinders :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s Doc
 ppBinders s hop args tm =
      do cond2 <- parsesAsBinder s
         if cond2 && length args == 1 && isGAbs (head args)
@@ -288,7 +288,7 @@ ppBinders s hop args tm =
 -- Infix operator case
                 else ppOperators s hop args tm
 
-ppOperators :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s TermDoc
+ppOperators :: Text -> HOLTerm -> [HOLTerm] -> HOLTerm -> PrintM s Doc
 ppOperators s hop args tm =
     do getRight <- assoc s `fmap` getRights
        getLeft <- assoc s `fmap` getLefts
@@ -326,7 +326,7 @@ ppOperators s hop args tm =
                              else fail "destBinaryTm"
                   else fail "destBinaryTm"
 
-ppConstants :: Text -> HOLTerm -> [HOLTerm] -> PrintM s TermDoc
+ppConstants :: Text -> HOLTerm -> [HOLTerm] -> PrintM s Doc
 ppConstants s hop args
     | null args && (isConst hop || isVar hop) =
           do cond1 <- parsesAsBinder s
@@ -334,7 +334,7 @@ ppConstants s hop args
              cond3 <- (test' . assoc s) `fmap` getRights
              cond4 <- (test' . assoc s) `fmap` getLefts
              cond5 <- parsesAsPrefix s
-             let base = pretty s
+             let base = pretty $ show s
              return $! if cond1 || cond2 || cond3 || cond4 || cond5
                        then parens base
                        else base
@@ -354,7 +354,7 @@ reverseInterface s0 ty0 =
                       test' (typeMatch ty ty0 ([], [], []))) iface
        return $! maybe s0 fst s1
 
-ppTyComb :: (HOLTerm, HOLType) -> PrintM s TermDoc
+ppTyComb :: (HOLTerm, HOLType) -> PrintM s Doc
 ppTyComb (t, ty) =
     do prec <- getPrec
        t' <- setPrec 999 >> ppTerm t
@@ -362,7 +362,7 @@ ppTyComb (t, ty) =
        let base = t' <+> brackets (char ':' <> ty')
        return $! if prec == 1000 then parens base else base
 
-ppLet :: ([(HOLTerm, HOLTerm)], HOLTerm) -> PrintM s TermDoc
+ppLet :: ([(HOLTerm, HOLTerm)], HOLTerm) -> PrintM s Doc
 ppLet (eqs@(_:_), bod) =
     do prec <- getPrec
        eqs' <- mapM ppLet' eqs
@@ -370,14 +370,14 @@ ppLet (eqs@(_:_), bod) =
        let base = (text "let" <+> encloseSep empty empty (text "and") eqs' <+> 
                    text "in") `above` indent 2 bod'
        return $! if prec == 0 then base else parens base 
-  where ppLet' :: (HOLTerm, HOLTerm) -> PrintM s TermDoc
+  where ppLet' :: (HOLTerm, HOLTerm) -> PrintM s Doc
         ppLet' x =
             (do x' <- uncurry primMkEq x
                 setPrec 0 >> ppTerm x') <|> 
             (return $! text "<*bad let binding*>")
 ppLet (_, bod) = ppTerm bod
 
-ppGAbs :: HOLTerm -> PrintM s TermDoc
+ppGAbs :: HOLTerm -> PrintM s Doc
 ppGAbs tm =
     let (vs, bod) = stripGAbs tm in
       do prec <- getPrec
@@ -386,7 +386,7 @@ ppGAbs tm =
          let base = char '\\' <+> sep vs' <+> char '.' <+> bod'
          return $! if prec == 0 then base else parens base
 
-ppBinder :: Text -> Bool -> HOLTerm -> PrintM s TermDoc
+ppBinder :: Text -> Bool -> HOLTerm -> PrintM s Doc
 ppBinder prep f tm =
     let (vs, bod) = strip f ([], tm)
         bvs = pretty prep <> 
@@ -416,14 +416,14 @@ ppBinder prep f tm =
             strip True (('\'' `cons` bv):acc, bod)
         strip _ pat = pat
 
-ppMatch :: HOLTerm -> HOLTerm -> PrintM s TermDoc
+ppMatch :: HOLTerm -> HOLTerm -> PrintM s Doc
 ppMatch m cls =
     do prec <- getPrec
        m' <- setPrec 0 >> ppTerm m
        cls' <- ppClauses =<< destClauses cls
        let base = text "match" <+> m' <+> text "with" <+> cls'
        return $! if prec == 0 then base else parens base
-  where ppClauses :: [[HOLTerm]] -> PrintM s TermDoc
+  where ppClauses :: [[HOLTerm]] -> PrintM s Doc
         ppClauses [c] = ppClause c
         ppClauses (c:cs) = 
             do c' <- ppClause c 
@@ -431,7 +431,7 @@ ppMatch m cls =
                return $! c' <+> char '|' <+> cs'
         ppClauses _ = return empty
 
-        ppClause :: [HOLTerm] -> PrintM s TermDoc
+        ppClause :: [HOLTerm] -> PrintM s Doc
         ppClause [p, r] = 
             do p' <- setPrec 1 >> ppTerm p
                r' <- setPrec 1 >> ppTerm r
@@ -443,7 +443,7 @@ ppMatch m cls =
                return $! p' <+> "when" <+> g' <+> "->" <+> r'
         ppClause _ = return empty
 
-destClauses :: MonadThrow m => HOLTerm -> m [[HOLTerm]]
+destClauses :: forall m. MonadThrow m => HOLTerm -> m [[HOLTerm]]
 destClauses tm =
     let (s, args) = stripComb tm in
       if nameOf s == "_SEQPATTERN" && length args == 2
@@ -454,7 +454,7 @@ destClauses tm =
               return [c]
   where destClause :: MonadThrow m => HOLTerm -> m [HOLTerm]
         destClause tm' =
-            do (_, pbod) <- stripExists `fmap` (body =<< body tm')
+            do (_, pbod) <- stripExists' `fmap` (body $ body tm')
                let (s, args) = stripComb pbod
                if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
                   then do tm'1 <- rand =<< rator (head args)
@@ -468,7 +468,10 @@ destClauses tm =
                                return [tm'1, tm'2, tm'3]
                        else fail' "destClause"
 
-ppCond :: HOLTerm -> HOLTerm -> HOLTerm -> PrintM s TermDoc
+        stripExists' :: HOLTerm -> ([HOLTerm], HOLTerm)
+        stripExists' = splitList (destBinder' "?")
+
+ppCond :: HOLTerm -> HOLTerm -> HOLTerm -> PrintM s Doc
 ppCond c t e =
     do prec <- getPrec
        c' <- setPrec 0 >> ppTerm c
@@ -477,14 +480,14 @@ ppCond c t e =
        let base = text "if" <+> c' <+> text "then" <+> t' <+> text "else" <+> e'
        return $! if prec == 0 then base else parens base
 
-ppPrefix :: Text -> HOLTerm -> PrintM s TermDoc
+ppPrefix :: Text -> HOLTerm -> PrintM s Doc
 ppPrefix s arg =
     do prec <- getPrec
        arg' <- setPrec 999 >> ppTerm arg
-       let base = pretty s <+> arg'
+       let base = pretty (show s) <+> arg'
        return $! if prec == 1000 then parens base else base
 
-ppComb :: (HOLTerm, HOLTerm) -> PrintM s TermDoc
+ppComb :: (HOLTerm, HOLTerm) -> PrintM s Doc
 ppComb (l, r) =
     do prec <- getPrec
        l' <- setPrec 999 >> ppTerm l
@@ -495,7 +498,7 @@ ppComb (l, r) =
 -- Printer for Theorems
 
 -- | Pretty printer for 'HOLThm's.	
-ppThm :: HOLThm -> PrintM s TermDoc
+ppThm :: HOLThm -> PrintM s Doc
 ppThm (Thm [] c) = 
     do c' <- setPrec 0 >> ppTerm c
        return $! text "|-" <+> c'
@@ -515,9 +518,9 @@ class ShowHOL a where
       A version of 'show' lifted to the 'HOL' monad for context sensitive pretty
       printers.
     -}
-    showHOL :: a -> PrintM s TermDoc
+    showHOL :: a -> PrintM s Doc
 
-    showHOLList :: [a] -> PrintM s TermDoc
+    showHOLList :: [a] -> PrintM s Doc
     showHOLList = showHOLList' brackets comma <=< mapM showHOL
 
 instance ShowHOL a => ShowHOL [a] where
@@ -538,12 +541,12 @@ instance (ShowHOL a, ShowHOL b,ShowHOL c, ShowHOL d) =>
                              , showHOL c, showHOL d ]
 
 -- Prints a list of strings provided a wrapper function and seperator document.
-showHOLList' :: (TermDoc -> TermDoc) -> TermDoc -> [TermDoc] -> PrintM s TermDoc
+showHOLList' :: (Doc -> Doc) -> Doc -> [Doc] -> PrintM s Doc
 showHOLList' wrap sepr =
     return . wrap . sep . showHOLListRec sepr
   
 -- Useful to have at top level for ppThm.
-showHOLListRec :: TermDoc -> [TermDoc] -> [TermDoc]
+showHOLListRec :: Doc -> [Doc] -> [Doc]
 showHOLListRec _ [] = [empty]
 showHOLListRec _ [x] = [x]
 showHOLListRec sepr (x:xs) = (x <> sepr <> space) : showHOLListRec sepr xs

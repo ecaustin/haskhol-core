@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DeriveLift, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.Printer.Prims
   Copyright: (c) Evan Austin 2015
@@ -20,7 +20,7 @@ import HaskHOL.Core.Parser.Prims (initBinderOps, initTyBinderOps, initInfixOps)
 
 import Control.Lens
 
-import Language.Haskell.TH.Lift
+import Language.Haskell.TH.Syntax
 
 data PrintContext = PrintContext
     { _interface :: ![(Text, (Text, HOLType))]
@@ -31,15 +31,12 @@ data PrintContext = PrintContext
     , _rights    :: ![(Text, Int)]
     , _unspaced  :: ![Text]
     , _prebroken :: ![Text]
-    } deriving Typeable
+    } deriving Lift
+makeLenses ''PrintContext
 
 grabInfix :: Text -> [(Text, (Int, Text))] -> [(Text, Int)]
 grabInfix a = mapFilter $ \ (x, (n, a')) -> 
     if a == a' then return (x, n) else fail' "grabInfix"
-
-deriveLift ''PrintContext
-
-makeLenses ''PrintContext
 
 deriveSafeCopy 0 'base ''PrintContext
 

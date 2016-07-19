@@ -1,24 +1,61 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, MultiParamTypeClasses #-}
 module HaskHOL.Core.Overloadings where
 
 import qualified HaskHOL.Core.Kernel as K
-import qualified HaskHOL.Core.State as S
 import qualified HaskHOL.Core.Basics as B
 import qualified HaskHOL.Core.Parser as P
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel (HOLTerm, HOLType, HOLThm, SubstTrip, Inst)
-import HaskHOL.Core.State (HOL, Theory)
+import HaskHOL.Core.Kernel (HOLTermEnv, HOLTerm, HOLType, TypeOp, HOLThm, SubstTrip, Inst)
+import HaskHOL.Core.State.Monad (HOL, Theory)
 import HaskHOL.Core.Parser 
     (HOLTermRep, HOLTypeRep, HOLThmRep, toHTm, toHTy, toHThm)
 
+-- Overloading Skeletons
+{-
+class Overload a where
+  type c x :: Constraint
+  overload :: c x => x -> HOL cls thry a
+
+instance Overload HOLTerm where
+  type c ty = HOLTypeRep ty cls thry
+  overload = toHTy
+-}
+
+overloadTy1 :: (MonadThrow m, HOLTypeRep ty cls thry) 
+            => (HOLType -> m a) -> ty -> HOL cls thry a
+overloadTy1 f = f <=< toHTy
+
+overloadTy2 :: (MonadThrow m, HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
+            => (HOLType -> HOLType -> m HOLType) -> ty1 -> ty2 
+            -> HOL cls thry HOLType
+overloadTy2 f = overloadTy1 (overloadTy1 f)
+
+overloadTm1 :: (MonadThrow m, HOLTermRep tm cls thry) 
+            => (HOLTerm -> m a) -> tm -> HOL cls thry a
+overloadTm1 f = f <=< toHTm
+
+overloadTms :: (MonadThrow m, HOLTermRep tm cls thry)
+            => ([HOLTerm] -> m a) -> [tm] -> HOL cls thry a
+overloadTms f = f <=< mapM toHTm
+
+overloadTmEnv2 :: (MonadThrow m, HOLTermRep tm1 cls thry, 
+                   HOLTermRep tm2 cls thry, HOLTermRep tm3 cls thry)
+               => (HOLTermEnv -> HOLTerm -> m HOLTerm) 
+               -> [(tm1, tm2)] -> tm3 -> HOL cls thry HOLTerm
+overloadTmEnv2 f penv ptm =
+  f <$> mapM (toHTm `ffCombM` toHTm) penv <*> toHTm ptm
+
 -- Kernel Type Functions
+destFunTy :: HOLTypeRep ty cls thry => ty -> HOL cls thry (HOLType, HOLType)
+destFunTy = destFunTy `fmap` toHTy
+
+tyApp :: HOLTypeRep ty cls thry => TypeOp -> [ty] -> HOL cls thry HOLType
+tyApp op = K.tyApp op <=< mapM toHTy
+
 mkUType :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
         => ty1 -> ty2 -> HOL cls thry HOLType
-mkUType pty1 pty2 =
-    do ty1 <- toHTy pty1
-       ty2 <- toHTy pty2
-       K.mkUType ty1 ty2
+mkUType = overloadTy2 K.mkUType
 
 mkUTypes :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
          => [ty1] -> ty2 -> HOL cls thry HOLType
@@ -27,14 +64,30 @@ mkUTypes ptys pty =
        ty <- toHTy pty
        K.mkUTypes tys ty
 
-typeMatch :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
-          => ty1 -> ty2 -> HOL cls thry SubstTrip
-typeMatch pty1 pty2 =
+typeMatch :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry,
+              HOLTypeRep ty3 cls thry, HOLTypeRep ty4 cls thry,
+              HOLTypeRep ty5 cls thry)
+          => ty1 -> ty2 
+          -> ([(ty3, ty4)], [(K.TypeOp, ty5)], [(K.TypeOp, K.TypeOp)]) 
+          -> HOL cls thry SubstTrip
+typeMatch pty1 pty2 (ptys, ptyops, pops) =
     do ty1 <- toHTy pty1
        ty2 <- toHTy pty2
-       K.typeMatch ty1 ty2 ([],[],[])
+       tys <- mapM (toHTy `ffCombM` toHTy) ptys
+       tyops <- mapM (return `ffCombM` toHTy) ptyops
+       K.typeMatch ty1 ty2 (tys, tyops, pops)
+
+typeMatch_NIL :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
+              => ty1 -> ty2 -> HOL cls thry SubstTrip
+typeMatch_NIL pty1 pty2 =
+    do ty1 <- toHTy pty1
+       ty2 <- toHTy pty2
+       K.typeMatch ty1 ty2 ([], [], [])
 
 -- Kernel Term Functions
+typeOf :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLType
+typeOf ptm = K.typeOf `fmap` toHTm ptm
+
 mkVar :: HOLTypeRep ty cls thry => Text -> ty -> HOL cls thry HOLTerm
 mkVar x pty = 
     do ty <- toHTy pty
@@ -67,6 +120,54 @@ mkTyComb ptm pty =
     do tm <- toHTm ptm
        ty <- toHTy pty
        K.mkTyComb tm ty
+
+destVar :: HOLTermRep tm cls thry => tm -> HOL cls thry (Text, HOLType)
+destVar = K.destVar <=< toHTm
+
+destAbs :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destAbs = K.destAbs <=< toHTm
+
+destComb :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destComb = K.destComb <=< toHTm
+
+destTyAbs :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLType, HOLTerm)
+destTyAbs = K.destTyAbs <=< toHTm
+
+destTyComb :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLType)
+destTyComb = K.destTyComb <=< toHTm
+
+destEq :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destEq = K.destEq <=< toHTm
+
+varSubst :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry, 
+             HOLTermRep tm3 cls thry)
+         => [(tm1, tm2)] -> tm3 -> HOL cls thry HOLTerm
+varSubst penv ptm =
+    do env <- mapM (toHTm `ffCombM` toHTm) penv
+       tm <- toHTm ptm
+       K.varSubst env tm
+
+class InstHOL a b cls thry where
+  instHOL :: [(a, b)] -> HOLTerm -> HOL cls thry HOLTerm
+
+instance (HOLTypeRep l cls thry, HOLTypeRep r cls thry) => 
+         InstHOL l r cls thry where
+    instHOL penv tm =
+        do env <- mapM (toHTy `ffCombM` toHTy) penv
+           return $! K.inst env tm
+
+instance HOLTypeRep r cls thry => InstHOL TypeOp r cls thry where
+    instHOL penv tm = 
+        do env <- mapM (return `ffCombM` toHTy) penv
+           return $! K.inst env tm
+
+instance InstHOL TypeOp TypeOp cls thry where
+    instHOL penv tm = return $! K.inst penv tm
+
+
+inst :: (InstHOL a b cls thry, HOLTermRep tm cls thry) 
+     => [(a, b)] -> tm -> HOL cls thry HOLTerm
+inst penv = instHOL penv <=< toHTm
 
 -- Kernel Theorem Functions
 
@@ -213,139 +314,142 @@ primTYAPP pty pthm =
 primTYBETA :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLThm
 primTYBETA = K.primTYBETA <=< toHTm
 
-
--- State Functions
-mkType :: HOLTypeRep ty cls thry => Text -> [ty] -> HOL cls thry HOLType
-mkType name = S.mkType name <=< mapM toHTy
-
-mkFunTy :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
-        => ty1 -> ty2 -> HOL cls thry HOLType
-mkFunTy pty1 pty2 =
-    do ty1 <- toHTy pty1
-       ty2 <- toHTy pty2
-       S.mkFunTy ty1 ty2
-
-{-| 
-  A redefinition of 'S.newConstant' to overload it for all valid term
-  representations as defined by 'HOLTermRep'.
--}
-newConstant :: HOLTypeRep ty Theory thry => (Text, ty) -> HOL Theory thry ()
-newConstant (name, pty) = S.newConstant name =<< toHTy pty
-
-{-| 
-  A redefinition of 'S.newAxiom' to overload it for all valid term
-  representations as defined by 'HOLTermRep'.
--}
-newAxiom :: HOLTermRep tm Theory thry => (Text, tm) -> HOL Theory thry HOLThm
-newAxiom (name, ptm) = S.newAxiom name =<< toHTm ptm
-
-{-| 
-  A redefinition of 'S.newBasicDefinition' to overload it for all valid term
-  representations as defined by 'HOLTermRep'.
--}
-newBasicDefinition :: HOLTermRep tm Theory thry 
-                   => (Text, tm) -> HOL Theory thry HOLThm
-newBasicDefinition (lbl, ptm) = S.newBasicDefinition lbl =<< toHTm ptm
-
--- Basic Functions
+-- Core "Basic" Functions
 tysubst :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry, 
             HOLTypeRep ty3 cls thry) 
         => [(ty1, ty2)] -> ty3 -> HOL cls thry HOLType
-tysubst penv pty =
-    do env <- mapM (toHTy `ffCombM` toHTy) penv
-       ty <- toHTy pty
-       B.tysubst env ty
+tysubst = overloadTy1 (overloadTyEnv B.tysubst)
+
+alphaUtype :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
+           => ty1 -> ty2 -> HOL cls thry HOLType
+alphaUtype = overloadTy2 B.alphaUtype
 
 mkEq :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry) 
      => tm1 -> tm2 -> HOL cls thry HOLTerm
-mkEq ptm1 ptm2 =
-    do tm1 <- toHTm ptm1
-       tm2 <- toHTm ptm2
-       B.mkEq tm1 tm2
+mkEq = overloadTm2 B.mkEq
 
 subst :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry, 
           HOLTermRep tm3 cls thry) 
       => [(tm1, tm2)] -> tm3 -> HOL cls thry HOLTerm
-subst ptmenv ptm = 
-    do tmenv <- mapM (toHTm `ffCombM` toHTm) ptmenv
-       tm <- toHTm ptm
-       B.subst tmenv tm
+subst = overloadTmEnv2 B.subst
+
+alpha :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry) 
+      => tm1 -> tm2 -> HOL cls thry HOLTerm
+alpha = overloadTm2 B.alpha
+
+alphaTyabs :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
+           => ty -> tm -> HOL cls thry HOLTerm
+alphaTyabs = overloadTm1 (overloadTy1 B.alphaTyabs)
 
 listMkComb :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
            => tm1 -> [tm2] -> HOL cls thry HOLTerm
-listMkComb ptm ptms =
-    do tm <- toHTm ptm
-       tms <- mapM toHTm ptms
-       B.listMkComb tm tms
+listMkComb = overloadTms (overloadTm1 B.listMkComb)
 
 listMkTyComb :: (HOLTermRep tm cls thry, HOLTypeRep ty cls thry)
              => tm -> [ty] -> HOL cls thry HOLTerm
-listMkTyComb ptm ptys =
-    do tm <- toHTm ptm
-       tys <- mapM toHTy ptys
-       B.listMkTyComb tm tys
+listMkTyComb = overloadTys (overloadTm1 B.listMkTyComb)
 
 listMkAbs :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
           => [tm1] -> tm2 -> HOL cls thry HOLTerm
-listMkAbs ptms ptm =
-    do tms <- mapM toHTm ptms
-       tm <- toHTm ptm
-       B.listMkAbs tms tm
+listMkAbs = overloadTm1 (overloadTms B.listMkAbs)
 
 listMkTyAbs :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
             => [ty] -> tm -> HOL cls thry HOLTerm
-listMkTyAbs ptys ptm = 
-    do tys <- mapM toHTy ptys
-       tm <- toHTm ptm
-       B.listMkTyAbs tys tm
+listMkTyAbs = overloadTm1 (overloadTys B.listMkTyAbs)
 
 rator :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
-rator = B.rator <=< toHTm
+rator = overloadTm1 B.rator
 
 rand :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
-rand = B.rand <=< toHTm
+rand = overloadTm1 B.rand
 
 bndvar :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
-bndvar = B.bndvar <=< toHTm
+bndvar = overloadTm1 B.bndvar
 
 body :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
-body = B.body <=< toHTm
+body = overloadTm1 B.body
 
 bndvarTyabs :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLType
-bndvarTyabs = B.bndvarTyabs <=< toHTm
+bndvarTyabs = overloadTm1 B.bndvarTyabs
 
 bodyTyabs :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
-bodyTyabs = B.bodyTyabs <=< toHTm
+bodyTyabs = overloadTm1 B.bodyTyabs
+
+mkIComb :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+        => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkIComb = overloadTm2 B.mkIComb
+
+destBinary :: HOLTermRep tm cls thry 
+           => Text -> tm -> HOL cls thry (HOLTerm, HOLTerm)
+destBinary s = overloadTm1 (B.destBinary s)
+
+destBinop :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry) 
+          => tm1 -> tm2 -> HOL cls thry (HOLTerm, HOLTerm)
+destBinop = overloadTm2 B.destBinop
 
 mkBinop :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry, 
             HOLTermRep tm3 cls thry) 
         => tm1 -> tm2 -> tm3 -> HOL cls thry HOLTerm
-mkBinop ptm1 ptm2 ptm3 =
-    do tm1 <- toHTm ptm1
-       tm2 <- toHTm ptm2
-       tm3 <- toHTm ptm3
-       B.mkBinop tm1 tm2 tm3
+mkBinop = overloadTm1 (overloadTm2 B.mkBinop)
 
-listMkBinop :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry) 
+listMkBinop :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
             => tm1 -> [tm2] -> HOL cls thry HOLTerm
-listMkBinop ptm ptms =
-    do tm <- toHTm ptm
-       tms <- mapM toHTm ptms
-       B.listMkBinop tm tms
+listMkBinop = overloadTms (overlodaTm1 B.listMkBinop)
 
-mkBinder :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
-         => Text -> tm1 -> tm2 -> HOL cls thry HOLTerm
-mkBinder op ptm1 ptm2 =
-    do tm1 <- toHTm ptm1
-       tm2 <- toHTm ptm2
-       B.mkBinder op tm1 tm2
+destGAbs :: HOLTermRep tm cls thry 
+           => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destGAbs = overloadTm1 B.destGAbs
 
-mkTyBinder :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
-           => Text -> ty -> tm -> HOL cls thry HOLTerm
-mkTyBinder op pty ptm =
-    do ty <- toHTy pty
-       tm <- toHTm ptm
-       B.mkTyBinder op ty tm
+destBinder :: HOLTermRep tm cls thry 
+           => Text -> tm -> HOL cls thry (HOLTerm, HOLTerm)
+destBinder op = overloadTm1 (B.destBinder op)
+
+destTyBinder :: HOLTermRep tm cls thry 
+             => Text -> tm -> HOL cls thry (HOLType, HOLTerm)
+destTyBinder op = overloadTm1 (B.destTyBinder op)
+
+destIff :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destIff = overloadTm1 B.destIff
+
+destConj :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destConj = overloadTm1 B.destConj
+
+destImp :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destImp = overloadTm1 B.destImp
+
+destForall :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destForall = overloadTm1 B.destForall
+
+destExists :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destExists = overloadTm1 B.destExists
+
+destNeg :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
+destNeg = overloadTm1 B.destNeg
+
+destDisj :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destDisj = overloadTm1 B.destDisj
+
+destUExists :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destUExists = overloadTm1 B.destUExists
+
+destTyAll :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLType, HOLTerm)
+destTyAll = overloadTm1 B.destTyAll
+
+destTyEx :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLType, HOLTerm)
+destTyEx = overloadTm1 B.destTyEx
+
+destCons :: HOLTermRep tm cls thry => tm -> HOL cls thry (HOLTerm, HOLTerm)
+destCons = overloadTm1 B.destCons
+
+destList :: HOLTermRep tm cls thry => tm -> HOL cls thry [HOLTerm]
+destList = overloadTm1 B.destList
+
+destLet :: HOLTermRep tm cls thry 
+        => tm -> HOL cls thry ([(HOLTerm, HOLTerm)], HOLTerm)
+destLet = overloadTm1 B.destLet
+
+destNumeral :: HOLTermRep tm cls thry => tm -> HOL cls thry Integer
+destNumeral = overloadTm1 B.destNumeral
 
 -- Parser Functions
 {-|

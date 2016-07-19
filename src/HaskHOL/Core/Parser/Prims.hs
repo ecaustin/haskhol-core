@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DeriveLift, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.Parser.Prims
   Copyright: (c) Evan Austin 2015
@@ -19,8 +19,8 @@ import HaskHOL.Core.State.Monad
 
 import Control.Lens
 
-import Language.Haskell.TH.Lift
-import Instances.TH.Lift()
+import Instances.TH.Lift ()
+import Language.Haskell.TH.Syntax
 
 import qualified Text.Parsec as P
 
@@ -61,10 +61,7 @@ data ParseContext = ParseContext
     , _interface :: ![(Text, (Text, HOLType))]
     , _overloads :: !(Map Text HOLType)
     , _hidden :: ![Text]
-    } deriving Typeable
-
-deriveLift ''ParseContext
-
+    } deriving Lift
 makeLenses ''ParseContext
 
 deriveSafeCopy 0 'base ''ParseContext

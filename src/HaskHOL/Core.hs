@@ -36,24 +36,17 @@ module HaskHOL.Core
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel hiding 
 -- hidden for overloadings
-    ( mkUType, mkUTypes, typeMatch
+    ( typeOf, mkUType, mkUTypes, typeMatch, inst
     , mkVar, mkAbs, mkComb, mkTyAbs, mkTyComb
+    , destVar, destAbs, destComb, destTyAbs, destTyComb, destEq, varSubst
     , primREFL, primTRANS, primMK_COMB, primABS, primBETA, primASSUME, primEQ_MP
     , primDEDUCT_ANTISYM, primINST_TYPE, primINST_TYPE_FULL, primINST, primTYABS
     , primTYAPP2, primTYAPP, primTYBETA
 -- stateless primitives hidden to encourage stateful alternatives
     , axiomThm, newDefinedConst, newDefinedTypeOp
     )
-import HaskHOL.Core.State hiding 
--- hidden for overloadings
-    ( mkType, mkFunTy, newConstant, newAxiom, newBasicDefinition 
-    )
-import HaskHOL.Core.Basics hiding 
--- hidden for overloadings
-    ( tysubst, mkEq, subst, listMkComb, listMkTyComb, listMkAbs, listMkTyAbs
-    , rator, rand, bndvar, body, bndvarTyabs, bodyTyabs
-    , mkBinop, listMkBinop, mkBinder, mkTyBinder
-    )
+import HaskHOL.Core.State
+import HaskHOL.Core.Basics
 import HaskHOL.Core.Parser hiding 
  -- hidden for overloadings
     ( makeOverloadable, reduceInterface 

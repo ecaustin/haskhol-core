@@ -1,5 +1,5 @@
-{-# LANGUAGE PatternSynonyms, TypeFamilies #-}
-
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, 
+             PatternSynonyms, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.State
   Copyright: (c) Evan Austin 2015
@@ -32,7 +32,8 @@ module HaskHOL.Core.State
     , getConstType
     , newConstant
     , mkConst
-    , mkConstFull
+    , mkConst_FULL
+    , mkConst_NIL
     -- * Stateful Theory Extension Primitives
     , axioms
     , newAxiom
@@ -47,15 +48,19 @@ module HaskHOL.Core.State
     , warn
     , printDebugLn
     , printDebug
-      -- * Monad Re-Export
+      -- * Stateful Re-Exports
     , module HaskHOL.Core.State.Monad
+    , module HaskHOL.Core.State.Basics
     ) where
 
+import HaskHOL.Core.Basics
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel
+import HaskHOL.Core.Kernel hiding (tyApp, typeOf, destEq)
 import HaskHOL.Core.State.Monad
+import HaskHOL.Core.State.Basics
 
 import HaskHOL.Core.Parser.Prims
+import HaskHOL.Core.Parser.Rep
 
 -- New flags and extensions
 -- | Flag states whether or not to print debug statements.
@@ -167,6 +172,29 @@ makeAcidic ''TheCoreDefinitions
     ['insertCoreDefinition, 'getCoreDefinitions, 'getCoreDefinition]
 
 
+-- Term and Type Generation
+{-|  
+  Generates a new term variable consisting of a given prefix and the next value
+  in the fresh term counter.
+-}
+genVarWithName :: HOLTypeRep ty cls thry => Text -> ty -> HOL cls thry HOLTerm
+genVarWithName n ty =
+    do count <- tickTermCounter
+       mkVar (n `append` textShow count) ty
+
+-- | A version of 'genVarWithName' that defaults to the prefix \"_\".
+genVar :: HOLTypeRep ty cls thry => ty -> HOL cls thry HOLTerm
+genVar = genVarWithName "_"
+
+{-|
+  Generates a new small, type variable with a name built using the fresh type
+  counter.
+-}
+genSmallTyVar :: HOL cls thry HOLType
+genSmallTyVar =
+    do count <- tickTypeCounter
+       (mkSmall . mkVarType $ '_' `cons` textShow count) <?> "genSmallTyVar"
+
 -- Stateful HOL Light Type Primitives
 {-|
   Retrieves the 'Map' of type constants from the current working theory.  The
@@ -233,7 +261,7 @@ newType name arity =
 
   * A type operator is applied to zero arguments.
 -}
-mkType :: Text -> [HOLType] -> HOL cls thry HOLType
+mkType :: HOLTypeRep ty cls thry => Text -> [ty] -> HOL cls thry HOLType
 mkType name args =
     do consts <- types
        case runCatch $ mapAssoc name consts of
@@ -258,8 +286,12 @@ mkType name args =
   Constructs a function type safely using 'mkType'.  Should never fail provided
   that the initial value for type constants has not been modified.
 -}
-mkFunTy :: HOLType -> HOLType -> HOL cls thry HOLType
-mkFunTy ty1 ty2 = mkType "fun" [ty1, ty2]
+mkFunTy :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
+        => ty1 -> ty2 -> HOL cls thry HOLType
+mkFunTy pty1 pty2 = 
+    do ty1 <- toHTy pty1
+       ty2 <- toHTy pty2
+       mkType "fun" [ty1, ty2]
 
 -- State for Constants
 {-|
@@ -283,7 +315,7 @@ constants =
 getConstType :: Text -> HOL cls thry HOLType
 getConstType name =
     do consts <- constants
-       (typeOf `fmap` mapAssoc name consts) <?> 
+       (typeOf =<< mapAssoc name consts) <?> 
          "getConstType: not a constant name"
 
 {-
@@ -304,13 +336,27 @@ newConstant' name c =
   this new term to the current working theory.  Throws a 'HOLException' when a
   term of the same name has already been declared.
 -}
-newConstant :: Text -> HOLType -> HOL Theory thry ()
-newConstant name ty =
+newConstant :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
+newConstant name pty =
     do cond <- can getConstType name
        if cond
           then printDebugLn ("newConstant: ignoring redefintion of " ++ 
                              show name) $ return ()
-          else newConstant' name $ newPrimitiveConst name ty
+          else do ty <- toHTy pty
+                  newConstant' name $ newPrimitiveConst name ty
+
+class TypeSubstHOL a b cls thry where
+    instConstHOL :: HOLTerm -> [(a, b)] -> HOL cls thry HOLTerm
+
+instance (HOLTypeRep l cls thry, HOLTypeRep r cls thry) => 
+         TypeSubstHOL l r cls thry where
+    instConstHOL tm = instConst tm <=< mapM (toHTy `ffCombM` toHTy)
+
+instance HOLTypeRep r cls thry => TypeSubstHOL TypeOp r cls thry where
+    instConstHOL tm = instConst tm <=< mapM (return `ffCombM` toHTy)
+
+instance TypeSubstHOL TypeOp TypeOp cls thry where
+    instConstHOL = instConst
 
 {-|
   Constructs a specific instance of a term constant when provided with its name
@@ -321,22 +367,30 @@ newConstant name ty =
 
   * The provided name is not a currently defined constant.
 -}
-mkConst :: TypeSubst l r => Text -> [(l, r)] -> HOL cls thry HOLTerm
+mkConst :: TypeSubstHOL l r cls thry => Text -> [(l, r)] -> HOL cls thry HOLTerm
 mkConst name tyenv =
     do consts <- constants
        tm <- mapAssoc name consts <?> "mkConst: not a constant name"
-       instConst tm tyenv <?> "mkConst: instantiation failed"
+       instConstHOL tm tyenv <?> "mkConst: instantiation failed"
 
 {-| 
   A version of 'mkConst' that accepts a triplet of type substitition 
   environments.  Frequently used with the 'typeMatch' function.
 -}
-mkConstFull :: Text -> SubstTrip -> HOL cls thry HOLTerm
-mkConstFull name pat =
-    do consts <- constants
+mkConst_FULL :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry,
+                 HOLTypeRep ty3 cls thry)
+             => Text -> ([(ty1, ty2)], [(TypeOp, ty3)], [(TypeOp, TypeOp)]) 
+             -> HOL cls thry HOLTerm
+mkConst_FULL name (penv, ptyops, ops) =
+    do env <- mapM (toHTy `ffCombM` toHTy) penv
+       tyops <- mapM (return `ffCombM` toHTy) ptyops
+       consts <- constants
        tm <- mapAssoc name consts <?>  "mkConstFull: not a constant name"
-       instConstFull tm pat <?> "mkConstFull: instantiation failed"
+       instConstFull tm (env, tyops, ops) <?> 
+         "mkConstFull: instantiation failed"
          
+mkConst_NIL ::Text -> HOL cls thry HOLTerm
+mkConst_NIL tm = mkConst tm ([] :: HOLTypeEnv)
 
 -- State for Axioms     
 
@@ -362,23 +416,23 @@ axioms =
 
   * An axiom with the provided name has already been declared.
 -}
-newAxiom :: Text -> HOLTerm -> HOL Theory thry HOLThm
-newAxiom name tm =
+newAxiom :: HOLTermRep tm Theory thry => Text -> tm -> HOL Theory thry HOLThm
+newAxiom name ptm =
     do acid <- openLocalStateHOL (TheAxioms mapEmpty)
        qth <- queryHOL acid (GetAxiom' name)
        closeAcidStateHOL acid
        case qth of
          Just th -> 
              return th
-         Nothing
-             | typeOf tm /= tyBool -> 
-                   fail "newAxiom: Not a proposition."
-             | otherwise ->
-                   let th = axiomThm tm in
-                     do acid' <- openLocalStateHOL (TheAxioms mapEmpty)
-                        updateHOL acid' (InsertAxiom name th)
-                        closeAcidStateHOL acid'
-                        return th
+         Nothing ->
+             do tm <- toHTm ptm
+                ty <- typeOf tm
+                failWhen (return $! ty /= tyBool) "newAxiom: Not a proposition."
+                let th = axiomThm tm
+                acid' <- openLocalStateHOL (TheAxioms mapEmpty)
+                updateHOL acid' (InsertAxiom name th)
+                closeAcidStateHOL acid'
+                return th
                    
 -- | Retrieves an axiom by label from the theory context.
 getAxiom :: Text -> HOL cls thry HOLThm
@@ -407,24 +461,27 @@ definitions =
   Throws a 'HOLException' when the definitional term is ill-formed.  See
   'newDefinedConst' for more details.
 -}
-newBasicDefinition :: Text -> HOLTerm -> HOL Theory thry HOLThm
-newBasicDefinition lbl tm =
+newBasicDefinition :: HOLTermRep tm Theory thry 
+                   => Text -> tm -> HOL Theory thry HOLThm
+newBasicDefinition lbl ptm =
     getBasicDefinition lbl
-    <|> case destEq tm of
-          Just (Const _ _, _) ->
-            fail "newBasicDefinition: constant already defined."
-          Just (Var name _, _)
-            | name /= lbl ->
-                  fail $ "newBasicDefinition: provided label does not " ++
-                         "match provided term."
-            | otherwise ->
-                  do (c@(Const x _), dth) <- newDefinedConst tm
-                     newConstant' x c
-                     acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
-                     updateHOL acid (InsertCoreDefinition lbl dth)
-                     closeAcidStateHOL acid
-                     return dth
-          _ -> fail "newBasicDefinition: provided term not an equation."
+    <|> do tm <- toHTm ptm
+           pat <- destEq tm
+           case pat of
+             (Const _ _, _) -> 
+                 fail "newBasicDefinition: constant already defined."
+             (Var name _, _)
+                 | name /= lbl ->
+                     fail $ "newBasicDefinition: provided label does not " ++
+                            "match provided term."
+                 | otherwise ->
+                     do (c@(Const x _), dth) <- newDefinedConst tm
+                        newConstant' x c
+                        acid <- openLocalStateHOL (TheCoreDefinitions mapEmpty)
+                        updateHOL acid (InsertCoreDefinition lbl dth)
+                        closeAcidStateHOL acid
+                        return dth
+             _ -> fail "newBasicDefinition: provided term not an equation."
                     
 -- | Retrieves a basic term definition by label from the theory context.
 getBasicDefinition :: Text -> HOL cls thry HOLThm
@@ -459,12 +516,13 @@ getBasicDefinition lbl =
 
   See 'newDefinedTypeOp' for more details.
 -}
-newBasicTypeDefinition :: Text -> Text -> Text -> HOLThm -> 
-                          HOL Theory thry (HOLThm, HOLThm)
-newBasicTypeDefinition tyname absname repname dth =
+newBasicTypeDefinition :: HOLThmRep thm Theory thry => Text -> Text -> Text 
+                       -> thm -> HOL Theory thry (HOLThm, HOLThm)
+newBasicTypeDefinition tyname absname repname pth =
   do failWhen (return or <*> mapM (can getConstType) [absname, repname]) $
        "newBasicTypeDefinition: Constant(s) " ++ show absname ++ ", " ++ 
        show repname ++ " already in use."
+     dth <- toHThm pth
      (atyop, a, r, dth1, dth2) <- newDefinedTypeOp tyname absname repname dth
      failWhen (canNot (newType' tyname) atyop) $
        "newBasicTypeDefinition: Type " ++ show tyname ++ " already defined."
