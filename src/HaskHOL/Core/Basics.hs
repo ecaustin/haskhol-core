@@ -122,11 +122,16 @@ module HaskHOL.Core.Basics
     , destNumeral
       -- * Term Nets
     , module HaskHOL.Core.Basics.Nets
+      -- * Stateful Basics
+    , module S
     ) where
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.Basics.Nets
+import HaskHOL.Core.Basics.Stateful
+import qualified HaskHOL.Core.Basics.Stateful as S hiding
+  (mkBinop, mkIComb, listMkComb)
 
 -- Term Generation
 mkVarInt :: Int -> HOLType -> HOLTerm
@@ -430,14 +435,6 @@ thmFrees _ = error "typeVarsInThm: exhaustive warning."
 
 -- more syntax
 {-|
-  Constructs a complex combination that represents the application of a 
-  function to a list of arguments.  Fails with 'Left' if any internal call to 
-  'mkComb' fails.
--}
-listMkComb :: MonadThrow m => HOLTerm -> [HOLTerm] -> m HOLTerm
-listMkComb = foldlM mkComb
-
-{-|
   Constructs a complex type combination that represents the application of a 
   term to a list of type arguments.  Fails with 'Left' if any internal call to 
   'mkComb' fails.
@@ -553,18 +550,6 @@ stripAbs = splitList destAbs
 -}
 stripTyAbs :: HOLTerm -> ([HOLType], HOLTerm)
 stripTyAbs = splitList destTyAbs
-
-{-|
-  A version of 'mkComb' that instantiates the type variables in the left hand
-  argument.  Relies internally on 'typeMatch' in order to provide a match
-  between the domain type of the function and the type of the argument.  Fails
-  with 'Nothing' if instantiation is impossible.
--}
-mkIComb :: MonadCatch m => HOLTerm -> HOLTerm -> m HOLTerm
-mkIComb tm1 tm2 =
-    do (ty, _) <- destFunTy $ typeOf tm1
-       mat <- typeMatch ty (typeOf tm2) ([], [], [])
-       mkComb (instFull mat tm1) tm2
                                           
 -- syntax for binary operators
 {-| 
@@ -608,14 +593,6 @@ destBinop _ tm = throwM $! HOLTermError tm "destBinop: not a binop application."
 -- | The pattern synonym equivalent of 'destBinop'.
 pattern Binop :: HOLTerm -> HOLTerm -> HOLTerm -> HOLTerm
 pattern Binop op l r <- Comb (Comb op l) r
-
-{-| 
-  A version of 'mkBinary' that accepts the operator as a pre-constructed term.
--}
-mkBinop :: MonadCatch m => HOLTerm -> HOLTerm -> HOLTerm -> m HOLTerm
-mkBinop op tm1 tm2 = 
-    (do tm <- mkComb op tm1
-        mkComb tm tm2) <?> "mkBinop"
 
 {-| 
   Iteratively builds a complex combination using 'mkBinop', i.e.

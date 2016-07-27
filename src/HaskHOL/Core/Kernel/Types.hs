@@ -300,12 +300,15 @@ tyBool :: HOLType
 tyBool = TyAppIn tyOpBool []
 
 -- | The pattern synonym equivalent of 'tyBool'.
+pattern TyBool :: HOLType
 pattern TyBool <- TyApp TyOpBool []
 
 -- | The pattern synonym for easily matching on function types.
+pattern TyFun :: HOLType -> HOLType -> HOLType
 pattern TyFun ty1 ty2 <- TyApp TyOpFun [ty1, ty2] 
 
 -- | An infix alias to 'TyFun'.
+pattern (:->) :: HOLType -> HOLType -> HOLType
 pattern ty1 :-> ty2 <- TyFun ty1 ty2
 
 -- Used for error cases in type checking only.  Not exported.
@@ -319,6 +322,7 @@ tyA :: HOLType
 tyA = TyVarIn False "A"
 
 -- | The pattern synonym equivalent of 'tyA'.
+pattern TyA :: HOLType
 pattern TyA <- TyVar False "A"
 
 -- | Alias to the unconstrained type variable @B@.
@@ -327,6 +331,7 @@ tyB :: HOLType
 tyB = TyVarIn False "B"
 
 -- | The pattern synonym equivalent of 'tyB'.
+pattern TyB :: HOLType
 pattern TyB <- TyVar False "B"
 
 {-| 
@@ -409,6 +414,7 @@ tyOpBool :: TypeOp
 tyOpBool = TyPrimitiveIn "bool" 0
 
 -- | The pattern synonym equivalent of 'tyOpBool'.
+pattern TyOpBool :: TypeOp
 pattern TyOpBool <- TyPrimitive "bool" 0
 
 -- Used for error cases in type checking only.  Not exported.
@@ -422,6 +428,7 @@ tyOpFun :: TypeOp
 tyOpFun = TyPrimitiveIn "fun" 2
 
 -- | The pattern synonym equivalent of 'tyOpFun'.
+pattern TyOpFun :: TypeOp
 pattern TyOpFun <- TyPrimitive "fun" 2
 
 {-|
@@ -484,7 +491,7 @@ typeOpInst tyopenv t =
     case runCatch $ tyOpInstRec (filter validSubst tyopenv) t of
       Right res -> res
       _         -> t
-  where arityOf :: (MonadCatch m, MonadThrow m) => HOLType -> m Int
+  where arityOf :: MonadCatch m => HOLType -> m Int
         arityOf ty = (length . fst) `fmap` destUTypes ty      
 
         tyOpInstRec :: [(TypeOp, HOLType)] -> HOLType -> Catch HOLType
@@ -545,7 +552,7 @@ mkUType tv _ = throwM $! HOLTypeError tv "mkUType"
 {-|
   Constructs a compound universal type given a list of bound types and a body.    Fails with 'Left' if any internal call to 'mkUType' fails.
 -}
-mkUTypes :: (MonadCatch m, MonadThrow m) => [HOLType] -> HOLType -> m HOLType
+mkUTypes :: MonadCatch m => [HOLType] -> HOLType -> m HOLType
 mkUTypes vs b = foldrM mkUType b vs <?> "mkUTypes"
 
 {-|
@@ -561,7 +568,7 @@ mkUTypes vs b = foldrM mkUType b vs <?> "mkUTypes"
 
   * The type operator argument is not a variable. 
 -}
-uTypeFromTypeOpVar :: (MonadCatch m, MonadThrow m) => TypeOp -> Int -> m HOLType
+uTypeFromTypeOpVar :: MonadCatch m => TypeOp -> Int -> m HOLType
 uTypeFromTypeOpVar s@TyOpVarIn{} n
     | n > 0 = 
         let tvs = map (\ x -> TyVarIn True . pack $ 'A' : show x) 
@@ -649,10 +656,10 @@ initTypeConstants = mapFromList [("bool", tyOpBool), ("fun", tyOpFun)]
   Fails with 'Nothing' in the event that a match cannot be found that satisfies
   the provided constraint.
 -}
-typeMatch :: (MonadCatch m, MonadThrow m) 
+typeMatch :: MonadCatch m 
           => HOLType -> HOLType -> SubstTrip -> m SubstTrip
 typeMatch vty cty sofar = snd `fmap` typeMatchRec vty cty ([], sofar)
-  where typeMatchRec :: (MonadCatch m, MonadThrow m) => HOLType -> HOLType 
+  where typeMatchRec :: MonadCatch m => HOLType -> HOLType 
                      -> ([HOLType], SubstTrip) -> m ([HOLType], SubstTrip)
         typeMatchRec v@TyVar{} c acc@(env, (sfar, opTys, opOps))
             | v `elem` env = return acc

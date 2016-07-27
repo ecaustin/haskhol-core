@@ -16,48 +16,15 @@
 module HaskHOL.Core
     ( -- * Library and Utility Functions
       module HaskHOL.Core.Lib
-      -- * Logical Kernel
-    , module HaskHOL.Core.Kernel
-      -- * Stateful Primitives
+      -- * Stateful Primitives, including complete overloadings for Kernel, Basic, and Parser libraries.
     , module HaskHOL.Core.State
-      -- * Basic Derived Type and Term Functions
-    , module HaskHOL.Core.Basics
-      -- * HaskHOL Parsers
-    , module HaskHOL.Core.Parser
       -- * HaskHOL Pretty Printers
     , module HaskHOL.Core.Printer
       -- * HaskHOL Core Extensions
     , module HaskHOL.Core.Ext
-      -- * HaskHOL Core Overloadings
-    , module HaskHOL.Core.Overloadings
-    , Constraint -- | A re-export of 'Constraint' from @GHC.Prim@.
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel hiding 
--- hidden for overloadings
-    ( typeOf, mkUType, mkUTypes, typeMatch, inst
-    , mkVar, mkAbs, mkComb, mkTyAbs, mkTyComb
-    , destVar, destAbs, destComb, destTyAbs, destTyComb, destEq, varSubst
-    , primREFL, primTRANS, primMK_COMB, primABS, primBETA, primASSUME, primEQ_MP
-    , primDEDUCT_ANTISYM, primINST_TYPE, primINST_TYPE_FULL, primINST, primTYABS
-    , primTYAPP2, primTYAPP, primTYBETA
--- stateless primitives hidden to encourage stateful alternatives
-    , axiomThm, newDefinedConst, newDefinedTypeOp
-    )
 import HaskHOL.Core.State
-import HaskHOL.Core.Basics
-import HaskHOL.Core.Parser hiding 
- -- hidden for overloadings
-    ( makeOverloadable, reduceInterface 
-    , overrideInterface, overloadInterface
-    , prioritizeOverload, newTypeAbbrev 
-    )
 import HaskHOL.Core.Printer
 import HaskHOL.Core.Ext
-import HaskHOL.Core.Overloadings
-
--- This re-export has to exist at the top-most module for some reason?
-import GHC.Prim (Constraint)
-
-

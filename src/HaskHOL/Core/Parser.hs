@@ -69,11 +69,11 @@ module HaskHOL.Core.Parser
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State.Monad
+import HaskHOL.Core.State.Monad 
+  (HOL, Theory, overParseContext, viewParseContext, testParseContext)
+import qualified HaskHOL.Core.State.Monad as State
 
 import HaskHOL.Core.Parser.Lib hiding ((<|>))
-import qualified HaskHOL.Core.Parser.Prims as Parser
-import qualified HaskHOL.Core.Printer.Prims as Printer
 import HaskHOL.Core.Parser.TypeParser
 import HaskHOL.Core.Parser.TermParser
 import HaskHOL.Core.Parser.Elab
@@ -83,20 +83,17 @@ import HaskHOL.Core.Parser.Rep
 -- | Specifies a 'Text' to be recognized as a term binder by the parser.
 parseAsBinder :: Text -> HOL Theory thry ()
 parseAsBinder op = let fun ops = nub (op : ops) in
-    do Parser.overParseContext Parser.binders fun
-       Printer.overPrintContext Printer.binders fun
+    overParseContext State.binders fun
 
 -- | Specifies a 'Text' to be recognized as a type binder by the parser.
 parseAsTyBinder :: Text -> HOL Theory thry ()
 parseAsTyBinder op = let fun ops = nub (op : ops) in
-    do Parser.overParseContext Parser.tyBinders fun
-       Printer.overPrintContext Printer.tyBinders fun
+    overParseContext State.tyBinders fun
 
 -- | Specifies a 'Text' to be recognized as a prefix operator by the parser.
 parseAsPrefix :: Text -> HOL Theory thry ()
 parseAsPrefix op = let fun ops = nub (op : ops) in
-    do Parser.overParseContext Parser.prefixes fun
-       Printer.overPrintContext Printer.prefixes fun
+    overParseContext State.prefixes fun
 
 {-| 
   Specifies a 'Text' to be recognized as an infix operator by the parser with
@@ -104,9 +101,9 @@ parseAsPrefix op = let fun ops = nub (op : ops) in
 -}
 parseAsInfix :: (Text, (Int, Text)) -> HOL Theory thry ()
 parseAsInfix i@(n, (p, as)) = 
-    do Parser.overParseContext Parser.infixes insertFun
-       let f = if as == "right" then Printer.rights else Printer.lefts
-       Printer.overPrintContext f (\ ops -> nub ((n, p) : ops))
+    do overParseContext State.infixes insertFun
+       let f = if as == "right" then State.rights else State.lefts
+       overParseContext f (\ ops -> nub ((n, p) : ops))
   where insertFun :: [(Text, (Int, Text))] -> [(Text, (Int, Text))]
         insertFun is
             | test' (find (\ (n', _) -> n == n') is) = is
@@ -116,77 +113,73 @@ parseAsInfix i@(n, (p, as)) =
 -- | Specifies a 'Text' for the parser to stop recognizing as a term binder.
 unparseAsBinder :: Text -> HOL Theory thry ()
 unparseAsBinder op = let fun = delete op in
-    do Parser.overParseContext Parser.binders fun
-       Printer.overPrintContext Printer.binders fun
+    overParseContext State.binders fun
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a type binder.
 unparseAsTyBinder :: Text -> HOL Theory thry ()
 unparseAsTyBinder op = let fun = delete op in
-    do Parser.overParseContext Parser.tyBinders fun
-       Printer.overPrintContext Printer.tyBinders fun
+    overParseContext State.tyBinders fun
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as a prefix operator.
 -}
 unparseAsPrefix :: Text -> HOL Theory thry ()
 unparseAsPrefix op = let fun = delete op in
-    do Parser.overParseContext Parser.prefixes fun
-       Printer.overPrintContext Printer.prefixes fun
+    overParseContext State.prefixes fun
 
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as an infix operator.
 -}
 unparseAsInfix :: Text -> HOL Theory thry ()
 unparseAsInfix op = let fun = filter (\ (x, _) -> x /= op) in
-    do Parser.overParseContext Parser.infixes fun
-       Printer.overPrintContext Printer.rights fun
-       Printer.overPrintContext Printer.lefts fun
+    do overParseContext State.infixes fun
+       overParseContext State.rights fun
+       overParseContext State.lefts fun
 
 -- | Predicate for 'Text's recognized as term binders by the parser.
 parsesAsBinder :: Text -> HOL cls thry Bool
-parsesAsBinder op = Parser.testParseContext Parser.binders (elem op)
+parsesAsBinder op = testParseContext State.binders (elem op)
 
 -- | Predicate for 'Text's recognized as type binders by the parser.
 parsesAsTyBinder :: Text -> HOL cls thry Bool
-parsesAsTyBinder op = Parser.testParseContext Parser.tyBinders (elem op)
+parsesAsTyBinder op = testParseContext State.tyBinders (elem op)
 
 -- | Predicate for 'Text's recognized as prefix operators by the parser.
 parsesAsPrefix :: Text -> HOL cls thry Bool
-parsesAsPrefix op = Parser.testParseContext Parser.prefixes (elem op)
+parsesAsPrefix op = testParseContext State.prefixes (elem op)
 
 -- | Predicate for 'Text's recognized as infix operators by the parser.
 parsesAsInfix :: Text -> HOL cls thry Bool
-parsesAsInfix op = Parser.testParseContext Parser.infixes (test' . assoc op)
+parsesAsInfix op = testParseContext State.infixes (test' . assoc op)
 
 -- | Returns all binders defined in the context.
 binders :: HOL cls thry [Text]
-binders = Parser.viewParseContext Parser.binders
+binders = viewParseContext State.binders
 
 -- | Returns all type binders defined in the context.
 tyBinders :: HOL cls thry [Text]
-tyBinders = Parser.viewParseContext Parser.tyBinders
+tyBinders = viewParseContext State.tyBinders
 
 -- | Returns all prefix operators defined in the context.
 prefixes :: HOL cls thry [Text]
-prefixes = Parser.viewParseContext Parser.prefixes
+prefixes = viewParseContext State.prefixes
 
 -- | Returns all infix operators defined in the context.
 infixes :: HOL cls thry [(Text, (Int, Text))]
-infixes = Parser.viewParseContext Parser.infixes
+infixes = viewParseContext State.infixes
 
 -- Interface
 -- | Returns the current parser interface.
 getInterface :: HOL cls thry [(Text, (Text, HOLType))]
-getInterface = Parser.viewParseContext Parser.interface
+getInterface = viewParseContext State.interface
 
 -- | Returns the current mapping of overloads for the parser.
 getOverloads :: HOL cls thry (Map Text HOLType)
-getOverloads = Parser.viewParseContext Parser.overloads
+getOverloads = viewParseContext State.overloads
 
 -- | Removes all instances of an overloaded symbol from the interface.
 removeInterface :: Text -> HOL Theory thry ()
 removeInterface sym = let fun = filter (\ (x, _) -> x /= sym) in
-    do Parser.overParseContext Parser.interface fun
-       Printer.overPrintContext Printer.interface fun
+    overParseContext State.interface fun
 {-| 
   Removes a specific instance of an overloaded symbol from the interface.  
   Throws a 'HOLException' if the provided term is not a constant or varible term
@@ -197,8 +190,7 @@ reduceInterface sym tm =
     do namty <- destConst tm <|> destVar tm <?> 
                   "reduceInterface: term not a constant or variable"
        let fun = delete (sym, namty)
-       Parser.overParseContext Parser.interface fun
-       Printer.overPrintContext Printer.interface fun
+       overParseContext State.interface fun
 {-|
   Removes all existing overloads for a given symbol and replaces them with a
   single, specific instance.  Throws a 'HOLException' if the provided term is
@@ -216,8 +208,7 @@ overrideInterface sym tm =
     do namty <- destConst tm <|> destVar tm <?> 
                   "overrideInterface: term not a constant or variable"
        let fun ifc = (sym, namty) : filter (\ (x, _) -> x /= sym) ifc
-           m = do Parser.overParseContext Parser.interface fun
-                  Printer.overPrintContext Printer.interface fun
+           m = overParseContext State.interface fun
        overs <- getOverloads
        case runCatch $ sym `mapAssoc` overs of
          Right gty -> if not . test' $ typeMatch gty (snd namty) ([], [], [])
@@ -244,7 +235,7 @@ makeOverloadable s gty =
              | gty == ty -> return ()
              | otherwise -> 
                  fail "makeOverloadable: differs from existing skeleton"
-         _ -> do Parser.overParseContext Parser.overloads (mapInsert s gty)
+         _ -> do overParseContext State.overloads (mapInsert s gty)
                  removeInterface s
 
 {-|
@@ -275,8 +266,7 @@ overloadInterface sym tm =
           then fail "overloadInstance: not an instance of type skeleton"
           else let i = (sym, namty) 
                    fun ifc = i : delete i ifc in
-                 do Parser.overParseContext Parser.interface fun
-                    Printer.overPrintContext Printer.interface fun
+                 overParseContext State.interface fun
 
 {-|
   Specifies a type to prioritize when the interface is used to overload a 
@@ -300,17 +290,17 @@ prioritizeOverload ty =
 
 -- Hidden Constants
 getHidden :: HOL cls thry [Text]
-getHidden = Parser.viewParseContext Parser.hidden
+getHidden = viewParseContext State.hidden
 
 -- | Specifies a 'Text' for the parser to stop recognizing as a constant.
 hideConstant :: Text -> HOL Theory thry ()
 hideConstant sym =
-    Parser.overParseContext Parser.hidden (\ syms -> sym : syms)
+    overParseContext State.hidden (\ syms -> sym : syms)
 
 -- | Specifies a 'Text' for the parser to resume recognizing as a constant.
 unhideConstant :: Text -> HOL Theory thry ()
 unhideConstant sym = 
-    Parser.overParseContext Parser.hidden (\ syms -> syms \\ [sym])
+    overParseContext State.hidden (\ syms -> syms \\ [sym])
 
 -- Type Abbreviations
 {-| 
@@ -321,18 +311,18 @@ unhideConstant sym =
 -}
 newTypeAbbrev :: Text -> HOLType -> HOL Theory thry ()
 newTypeAbbrev s ty = 
-    Parser.overParseContext Parser.typeAbbrevs (mapInsert s ty)
+    overParseContext State.typeAbbrevs (mapInsert s ty)
 
 {-| 
   Specifies a 'Text' for the parser to stop recognizing as a type 
   abbreviation.
 -}
 removeTypeAbbrev :: Text -> HOL Theory thry ()
-removeTypeAbbrev s = Parser.overParseContext Parser.typeAbbrevs (mapDelete s)
+removeTypeAbbrev s = overParseContext State.typeAbbrevs (mapDelete s)
 
 {-| 
   Returns all 'Text's currently acting as type abbreviations in the parser
   paired with their associated types.
 -}
 typeAbbrevs :: HOL cls thry (Map Text HOLType)
-typeAbbrevs = Parser.viewParseContext Parser.typeAbbrevs
+typeAbbrevs = viewParseContext State.typeAbbrevs

@@ -40,18 +40,14 @@ module HaskHOL.Core.Printer
     , getPrec
     , setPrec
     , ShowHOL(..)
-    , printContext
-    , initPrintContext
     , printHOL
     ) where
 
 import Prelude hiding ((<$>))
 import HaskHOL.Core.Lib hiding (ask, base)
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State
-import HaskHOL.Core.Basics hiding (destNumeral, destComb)
-
-import HaskHOL.Core.Printer.Prims
+import HaskHOL.Core.State.Monad
+import HaskHOL.Core.Basics hiding (destComb)
 
 import Control.Lens hiding (Const, op, cons, snoc)
 import Control.Monad.ST
@@ -69,12 +65,12 @@ type PrintM s = ReaderT (STRef s PrintState) (CatchT (ST s))
 
 data PrintState = PrintState
     { _precedence :: !Int
-    , _printCtxt :: !PrintContext
+    , _printCtxt :: ParseContext
     }
 
 makeLenses ''PrintState
 
-initPrintState :: PrintContext -> PrintState
+initPrintState :: ParseContext -> PrintState
 initPrintState = PrintState 0
 
 modPrintState :: (PrintState -> PrintState) -> PrintM s ()
@@ -104,7 +100,7 @@ testPrintState f p =
 -}
 addUnspacedBinop :: Text -> HOL Theory thry ()
 addUnspacedBinop op =
-    overPrintContext unspaced (\ ops -> nub (op:ops))
+    overParseContext unspaced (\ ops -> nub (op:ops))
 
 {-| 
   Specifies a symbol to be recognized as a prebroken, binary operator by the
@@ -117,7 +113,7 @@ addUnspacedBinop op =
 -}
 addPrebrokenBinop :: Text -> HOL Theory thry ()
 addPrebrokenBinop op =
-    overPrintContext prebroken (\ ops -> nub (op:ops))
+    overParseContext prebroken (\ ops -> nub (op:ops))
 
 {-| 
   Specifies a symbol to stop being recognized as an unspaced, binary operator 
@@ -129,7 +125,7 @@ addPrebrokenBinop op =
 -}
 removeUnspacedBinop :: Text -> HOL Theory thry ()
 removeUnspacedBinop op =
-    overPrintContext unspaced (delete op)
+    overParseContext unspaced (delete op)
 
 {-| 
   Specifies a symbol to stop being recognized as an prebroken, binary operator 
@@ -141,7 +137,7 @@ removeUnspacedBinop op =
 -}
 removePrebrokenBinop :: Text -> HOL Theory thry ()
 removePrebrokenBinop op =
-    overPrintContext prebroken (delete op)
+    overParseContext prebroken (delete op)
 
 {-| 
   Returns the list of all symbols current recognized as unspaced, binary
@@ -149,7 +145,7 @@ removePrebrokenBinop op =
 -}
 getUnspacedBinops :: HOL cls thry [Text]
 getUnspacedBinops =
-    viewPrintContext unspaced
+    viewParseContext unspaced
 
 {-| 
   Returns the list of all symbols current recognized as prebroken, binary
@@ -157,7 +153,7 @@ getUnspacedBinops =
 -}
 getPrebrokenBinops :: HOL cls thry [Text]
 getPrebrokenBinops =
-    viewPrintContext prebroken
+    viewParseContext prebroken
 
 -- | Returns the current precedence value from the pretty-printer's state.
 getPrec :: PrintM s Int
@@ -193,8 +189,8 @@ prebrokenBinops = viewPrintState $ view (printCtxt . prebroken)
 
 -- | Pretty printer for 'HOLType's.
 ppType :: HOLType -> PrintM s Doc
-ppType (TyVar False x) = return $! pretty x
-ppType (TyVar True x) = return . pretty $ '\'' `cons` x
+ppType (TyVar False x) = return $! pretty (unpack x)
+ppType (TyVar True x) = return . pretty . unpack $ '\'' `cons` x
 ppType ty =
     case destUTypes ty of
       Just (tvs, bod) -> 
@@ -207,7 +203,7 @@ ppType ty =
              let (name, ar) = destTypeOp op
                  name' = if ar < 0 then '_' `cons` name else name
              if null tys 
-                then return $! pretty name
+                then return . pretty $ unpack name
                 else case (name', tys) of
                        ("fun", [ty1,ty2]) ->
                            do ty1' <- setPrec 1 >> ppType ty1
@@ -227,7 +223,8 @@ ppType ty =
                               return $! ppTypeApp "^" (prec > 6) [ty1', ty2']
                        (bin, args) -> 
                            do args' <- mapM (\ x -> setPrec 0 >> ppType x) args
-                              return $! ppTypeApp "," True args' <+> pretty bin
+                              return $! ppTypeApp "," True args' <+> 
+                                        pretty (unpack bin)
   where ppTypeApp :: String -> Bool -> [Doc] -> Doc
         ppTypeApp sepr flag ds =
             case tryFoldr1 (\ x y -> x <+> text sepr <+> y) ds of
@@ -306,8 +303,8 @@ ppOperators s hop args tm =
                       wrapper = if newprec <= prec then parens else id
                       sepr = if s `elem` uops then (<>) else (<+>)
                       hanger x y = if s `elem` pops
-                                   then x `sepr` (pretty s <+> y)
-                                   else (x <+> pretty s) `sepr` y
+                                   then x `sepr` (pretty (unpack s) <+> y)
+                                   else (x <+> pretty (unpack s)) `sepr` y
                   (barg:bargs) <- mapM (\x -> setPrec newprec >> ppTerm x) args'
                   return . wrapper . foldr (flip hanger) barg $ reverse bargs
 -- Base constant or variable case
@@ -368,7 +365,7 @@ ppLet (eqs@(_:_), bod) =
        eqs' <- mapM ppLet' eqs
        bod' <- setPrec 0 >> ppTerm bod
        let base = (text "let" <+> encloseSep empty empty (text "and") eqs' <+> 
-                   text "in") `above` indent 2 bod'
+                   text "in") <$> indent 2 bod'
        return $! if prec == 0 then base else parens base 
   where ppLet' :: (HOLTerm, HOLTerm) -> PrintM s Doc
         ppLet' x =
@@ -389,8 +386,8 @@ ppGAbs tm =
 ppBinder :: Text -> Bool -> HOLTerm -> PrintM s Doc
 ppBinder prep f tm =
     let (vs, bod) = strip f ([], tm)
-        bvs = pretty prep <> 
-              foldr (\ x acc -> acc <+> pretty x) empty vs <> 
+        bvs = pretty (unpack prep) <> 
+              foldr (\ x acc -> acc <+> pretty (unpack x)) empty vs <> 
               char '.' in
       do prec <- getPrec
          bod' <- ppTerm bod
@@ -454,7 +451,7 @@ destClauses tm =
               return [c]
   where destClause :: MonadThrow m => HOLTerm -> m [HOLTerm]
         destClause tm' =
-            do (_, pbod) <- stripExists' `fmap` (body $ body tm')
+            do (_, pbod) <- stripExists' `fmap` (body =<< body tm')
                let (s, args) = stripComb pbod
                if nameOf s == "_UNGUARDED_PATTERN" && length args == 2
                   then do tm'1 <- rand =<< rator (head args)
@@ -469,7 +466,7 @@ destClauses tm =
                        else fail' "destClause"
 
         stripExists' :: HOLTerm -> ([HOLTerm], HOLTerm)
-        stripExists' = splitList (destBinder' "?")
+        stripExists' = splitList (destBinder "?")
 
 ppCond :: HOLTerm -> HOLTerm -> HOLTerm -> PrintM s Doc
 ppCond c t e =
@@ -567,7 +564,7 @@ instance ShowHOL HOLThm where
 -}
 printHOL :: ShowHOL a => a -> HOL cls thry ()
 printHOL x = 
-    do ctxt <- printContext
+    do ctxt <- parseContext
        either (fail . show) putDocHOL $ runST
          (do ref <- newSTRef $ initPrintState ctxt
              runCatchT $ runReaderT (showHOL x) ref)

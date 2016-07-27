@@ -66,8 +66,7 @@ module HaskHOL.Core.Parser.Lib
 
 import HaskHOL.Core.Lib hiding ((<|>), (<?>))
 import HaskHOL.Core.Kernel
-
-import HaskHOL.Core.Parser.Prims
+import HaskHOL.Core.State.Monad
 
 import Text.Parsec hiding 
     (runParser, setState, getState, updateState,ParseError)
@@ -76,6 +75,32 @@ import Text.Parsec.Language
 import Text.Parsec.Token
 
 import Control.Lens hiding (op)
+
+
+-- | Parsed, but pre-elaborated HOL types.
+data PreType
+    = PTyCon !Text
+    | UTyVar !Bool !Text !Int
+    | STyVar !Integer
+    | PTyComb !PreType ![PreType]
+    | PUTy !PreType !PreType
+    deriving (Eq, Show)
+
+-- | Parsed, but pre-elaborated HOL terms.
+data PreTerm
+    = PVar !Text !PreType
+    | PConst !Text !PreType
+    | PComb !PreTerm !PreTerm
+    | PAbs !PreTerm !PreTerm
+    | PAs !PreTerm !PreType
+    | PInst ![(PreType, Text)] !PreTerm
+    | PApp !PreType
+    | TyPAbs !PreType !PreTerm
+    | TyPComb !PreTerm !PreType !PreType
+    deriving (Eq, Show)
+
+-- | A re-export of 'P.ParseError'.
+type ParseError = P.ParseError
 
 -- | The default 'PreType' to be used as a blank for the type inference engine.
 dpty :: PreType

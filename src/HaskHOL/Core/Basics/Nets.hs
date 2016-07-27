@@ -27,7 +27,6 @@ module HaskHOL.Core.Basics.Nets
 
 import HaskHOL.Core.Lib
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.State.Monad
 
 -- ordered, unique insertion for sets as lists
 setInsert :: Ord a => a -> [a] -> [a]
@@ -81,46 +80,33 @@ deriveSafeCopy 0 'base ''TermLabel
     of the form @x \`op\` x@ will match any term of the form @a \`op\` b@ 
     regardless of the values of @a@ and @b@.
 -}
-data Net a = NetNode !(Map TermLabel (Net a)) [a] deriving (Show, Typeable)
+data Net a = 
+  NetNode !Integer !(Map TermLabel (Net a)) [a] deriving (Show, Typeable)
 
---EvNote: GHC7.10 broke auto-deriving for SafeCopy
 deriveSafeCopy 0 'base ''Net
-{-
-instance SafeCopy a => SafeCopy (Net a) where
-    putCopy (NetNode m xs) = contain $ do p1 <- getSafePut
-                                          p2 <- getSafePut
-                                          p1 m
-                                          p2 xs
-                                          return ()
-    getCopy = contain $ do g1 <- getSafeGet
-                           g2 <- getSafeGet
-                           return NetNode <*> g1 <*> g2
-    version = 0
-    kind = base
--}
 
 -- | The empty 'Net'.
 netEmpty :: Net a
-netEmpty = NetNode mapEmpty []
+netEmpty = NetNode 0 mapEmpty []
 
 -- | A version of 'map' for Nets.
 netMap :: (a -> b) -> Net a -> Net b
-netMap f (NetNode xs ys) =
-    NetNode (mapMap (netMap f) xs) $ map f ys
+netMap f (NetNode n xs ys) =
+    NetNode n (mapMap (netMap f) xs) $ map f ys
 
 {-
   Generates a net node label given a pattern term.  Differs from labelToLookup
   in that it accepts a list of variables to treat as local constants when
   generating the label.
 -}
-labelToStore :: [HOLTerm] -> HOLTerm -> (TermLabel, [HOLTerm])
-labelToStore lconsts tm = 
+labelToStore :: Integer -> [HOLTerm] -> HOLTerm -> (TermLabel, [HOLTerm])
+labelToStore n lconsts tm = 
     let (op, args) = revSplitList destComb tm in
       case op of
         (Const x _) -> (CNet x (length args), args)
         (Abs bv bod) -> 
             let bod' = if bv `elem` lconsts
-                       then let v = unsafeGenVar $ typeOf bv in
+                       then let v = mkVar ('_' `cons` textShow n) $ typeOf bv in
                               try' $! varSubst [(bv, v)] bod
                        else bod in
               (LNet (length args), bod':args)
@@ -136,13 +122,13 @@ labelToStore lconsts tm =
   the provided pattern using labelToStore.
 -}
 netUpdate :: Ord a => [HOLTerm] -> (a, [HOLTerm], Net a) -> Net a
-netUpdate _ (b, [], NetNode edges tips) = 
-    NetNode edges $ setInsert b tips
-netUpdate lconsts (b, tm:rtms, NetNode edges tips) =
-    let (label, ntms) = labelToStore lconsts tm
+netUpdate _ (b, [], NetNode n edges tips) = 
+    NetNode n edges $ setInsert b tips
+netUpdate lconsts (b, tm:rtms, NetNode n edges tips) =
+    let (label, ntms) = labelToStore n lconsts tm
         (child, others) = tryd (netEmpty, edges) $ mapRemove label edges
         newChild = netUpdate lconsts (b, ntms++rtms, child) in
-      NetNode (mapInsert label newChild others) tips
+      NetNode (succ n) (mapInsert label newChild others) tips
 
 {-| 
   Inserts a new element, paired with a pattern term, into a provided net.  The 
@@ -176,8 +162,8 @@ labelForLookup tm =
   pattern.
 -}
 follow :: ([HOLTerm], Net a) -> [a]
-follow ([], NetNode _ tips) = tips
-follow (tm:rtms, NetNode edges _) = 
+follow ([], NetNode _ _ tips) = tips
+follow (tm:rtms, NetNode _ edges _) = 
     let (label, ntms) = labelForLookup tm
         collection = case mapAssoc label edges of
                        Just child -> follow (ntms++rtms, child)
@@ -201,8 +187,9 @@ netLookup tm net = follow ([tm], net)
   implementation in HOL Light.
 -}
 netMerge :: Ord a => Net a -> Net a -> Net a
-netMerge (NetNode l1 data1) (NetNode l2 data2) =
-    NetNode (mapFoldrWithKey addNode (mapFoldrWithKey addNode mapEmpty l1) l2) $
+netMerge (NetNode n1 l1 data1) (NetNode n2 l2 data2) =
+    NetNode (max n1 n2) 
+      (mapFoldrWithKey addNode (mapFoldrWithKey addNode mapEmpty l1) l2) $
       setMerge data1 data2
   where addNode :: Ord a => TermLabel -> Net a -> Map TermLabel (Net a) ->
                             Map TermLabel (Net a)

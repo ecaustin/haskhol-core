@@ -50,17 +50,16 @@ module HaskHOL.Core.State
     , printDebug
       -- * Stateful Re-Exports
     , module HaskHOL.Core.State.Monad
-    , module HaskHOL.Core.State.Basics
+    , module HaskHOL.Core.Overloadings
     ) where
 
-import HaskHOL.Core.Basics
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel hiding (tyApp, typeOf, destEq)
-import HaskHOL.Core.State.Monad
-import HaskHOL.Core.State.Basics
+import HaskHOL.Core.State.Monad hiding
+  (typeAbbrevs, infixes, prefixes, tyBinders, binders)
 
-import HaskHOL.Core.Parser.Prims
-import HaskHOL.Core.Parser.Rep
+import HaskHOL.Core.Overloadings hiding
+  (mkType, mkConst, mkConst_NIL, mkConst_FULL, mkFunTy)
+import qualified HaskHOL.Core.Overloadings as O
 
 -- New flags and extensions
 -- | Flag states whether or not to print debug statements.

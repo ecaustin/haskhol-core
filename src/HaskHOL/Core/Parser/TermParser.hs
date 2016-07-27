@@ -62,8 +62,8 @@ module HaskHOL.Core.Parser.TermParser
 
 import HaskHOL.Core.Lib hiding ((<|>))
 import HaskHOL.Core.Parser.Lib
-import HaskHOL.Core.Parser.Prims
 import HaskHOL.Core.Parser.TypeParser
+import HaskHOL.Core.State.Monad
 
 import Control.Lens (view, views)
 

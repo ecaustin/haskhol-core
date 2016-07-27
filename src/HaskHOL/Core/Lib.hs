@@ -390,14 +390,14 @@ infix 0 <?>
   
   > m (<?>) str = m <|> fail' str
 -}  
-(<?>) :: (MonadCatch m, MonadThrow m) => m a -> String -> m a
+(<?>) :: MonadCatch m => m a -> String -> m a
 m <?> str = m <|> fail' str
 
 {-| 
   Converts the exception thrown by a computaiton to a 'String' and prepends it
   with a provided message.
 -}
-note :: (MonadCatch m, MonadThrow m) => String -> m a -> m a
+note :: MonadCatch m => String -> m a -> m a
 note str m =
     m `catch` (\ e -> case fromException e of
                         Just (HOLErrorMsg str2) -> 
@@ -410,7 +410,7 @@ fail' :: MonadThrow m => String -> m a
 fail' = throwM . HOLErrorMsg
 
 -- | The 'fail'' method guarded by 'when'.
-failWhen :: (MonadCatch m, MonadThrow m) => m Bool -> String -> m ()
+failWhen :: MonadCatch m => m Bool -> String -> m ()
 failWhen m str =
     do cond <- m
        when cond $ fail' str
@@ -745,7 +745,7 @@ findM f (x:xs) =
   the first successful application of the predicate to an element of the list.
   Fails when called on an empty list. 
 -}
-tryFind :: (MonadCatch m, MonadThrow m) => (a -> m b) -> [a] -> m b
+tryFind :: MonadCatch m => (a -> m b) -> [a] -> m b
 tryFind _ [] = fail' "tryFind"
 tryFind f (x:xs) = f x <|> tryFind f xs
 
@@ -1042,7 +1042,7 @@ applyd (Branch p b l r) d x
 applyd (Leaf h l) d x
     | h == hash x = applydRec l
     | otherwise = d x
-  where applydRec :: (Monad m, Ord a) => [(a, b)] -> m b
+  where applydRec :: [(a, b)] -> m b
         applydRec [] = d x
         applydRec ((a, b):t)
             | x == a = return b
@@ -1235,7 +1235,7 @@ mapFromList :: Ord a => [(a, b)] -> Map a b
 mapFromList = Map.fromList
 
 -- | A re-export of 'Map.toList'.
-mapToList :: Ord a => Map a b -> [(a, b)]
+mapToList :: Map a b -> [(a, b)]
 mapToList = Map.toList
 
 -- | A re-export of 'Map.map'.

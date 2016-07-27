@@ -65,16 +65,15 @@ library
 
     other-modules:
       HaskHOL.Core.Basics.Nets
+      HaskHOL.Core.Basics.Stateful
       HaskHOL.Core.Ext.Protected    
       HaskHOL.Core.Ext.QQ
       HaskHOL.Core.Kernel.Prims
       HaskHOL.Core.Parser.Elab
       HaskHOL.Core.Parser.Lib 
-      HaskHOL.Core.Parser.Prims 
       HaskHOL.Core.Parser.Rep 
       HaskHOL.Core.Parser.TermParser   
-      HaskHOL.Core.Parser.TypeParser  
-      HaskHOL.Core.Printer.Prims
+      HaskHOL.Core.Parser.TypeParser
       Paths_haskhol_core    
              
     ghc-prof-options: -O2 -funbox-strict-fields -Wall -fprof-auto

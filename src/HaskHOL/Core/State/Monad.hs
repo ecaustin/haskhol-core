@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
-{-# LANGUAGE ConstraintKinds, DataKinds, EmptyDataDecls, ScopedTypeVariables, 
-             TypeFamilies, TypeOperators, UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds, DataKinds, DeriveLift, EmptyDataDecls, 
+             ScopedTypeVariables, TypeFamilies, TypeOperators, 
+             UndecidableInstances #-}
 {-|
   Module:    HaskHOL.Core.State.Monad
   Copyright: (c) Evan Austin 2015
@@ -37,6 +38,28 @@ module HaskHOL.Core.State.Monad
     , BaseCtxt
     , ctxtBase
     , extendTheory
+      -- * Parse Contexts
+    , ParseContext
+    , initParseContext
+    , parseContext
+    , parseContextCache
+    , viewParseContext
+    , overParseContext
+    , testParseContext
+    , binders
+    , tyBinders
+    , prefixes
+    , infixes
+    , typeAbbrevs
+    , lefts
+    , rights
+    , hidden
+    , interface
+    , overloads
+    , prebroken
+    , termConstants
+    , typeConstants
+    , unspaced
       -- * Text Output Methods
     , putDocHOL
     , putStrHOL
@@ -61,20 +84,17 @@ module HaskHOL.Core.State.Monad
       -- * Methods Related to Fresh Name Generation
     , tickTermCounter
     , tickTypeCounter
-    , unsafeGenVarWithName
-    , unsafeGenVar
       -- * Proof Caching
     , cacheProof
     , unsafeCacheProof
     , cacheProofs
     , getProof
-      -- * Re-export for Extensible Exceptions
-    , Exception
+      -- * 
+    , Constraint
     ) where
 
 import HaskHOL.Core.Lib hiding (combine, pack)
-import qualified HaskHOL.Core.Lib as Lib (pack, append)
-import HaskHOL.Core.Kernel.Prims
+import HaskHOL.Core.Kernel hiding ((:=), typeOf)
 
 -- HOL Monad imports
 import Data.Typeable
@@ -82,15 +102,13 @@ import qualified Control.Exception as E
 import Data.IORef
 import GHC.Exts (Constraint)
 import qualified Data.HashMap.Strict as Hash
-import Data.Hashable
 import Data.Acid hiding (makeAcidic, Query, Update)
 import qualified Data.Text.Lazy as T
 import Text.PrettyPrint.ANSI.Leijen
-import System.IO.Unsafe (unsafePerformIO)
 
 -- TH imports
 import Language.Haskell.TH hiding (OverloadedStrings, QuasiQuotes)
-import Language.Haskell.TH.Syntax (lift, Module(..), modString)
+import Language.Haskell.TH.Syntax (Lift(..), Module(..), modString)
 
 -- Path Handling imports
 import Prelude hiding (FilePath)
@@ -101,99 +119,105 @@ import System.FilePath (combine)
 import Data.Text (pack)
 
 -- Util Imports
-import Data.Maybe (fromMaybe)
+import Control.Lens hiding (set)
+import qualified Control.Lens as Lens
 
 -- interpreter stuff
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
 import Language.Haskell.Interpreter.Unsafe
 
--- Messy Template Haskell stuff
--- Proofs
-data Proofs = Proofs !(Hash.HashMap Text HOLThm) deriving Typeable
-
-instance (SafeCopy a, SafeCopy b, Hashable a, Eq a) => 
-         SafeCopy (Hash.HashMap a b) where
-    getCopy = contain $ fmap Hash.fromList safeGet
-    putCopy = contain . safePut . Hash.toList
-
-deriveSafeCopy 0 'base ''Proofs
-
-{-
-mergeProofs :: Hash.HashMap Text HOLThm -> Update Proofs ()
-mergeProofs prfs' =
-    do (Proofs prfs) <- get
-       put (Proofs (prfs `Hash.union` prfs'))
--}
-
-insertProofs :: Hash.HashMap Text HOLThm -> Update Proofs ()
-insertProofs prfs' =
-    put (Proofs prfs')
-
-getProofs :: Query Proofs (Hash.HashMap Text HOLThm)
-getProofs =
-    do (Proofs prfs) <- ask
-       return prfs
-
-makeAcidic ''Proofs ['insertProofs, 'getProofs]
---
--- Types
-data TyCounter = TyCounter !Integer deriving Typeable
-
-deriveSafeCopy 0 'base ''TyCounter
-
-updateTyCounter :: Update TyCounter Integer
-updateTyCounter =
-    do TyCounter n <- get
-       let n' = succ n
-       put (TyCounter n')
-       return n'
-
-queryTyCounter :: Query TyCounter Integer
-queryTyCounter =
-    do TyCounter n <- ask
-       return n
-
-makeAcidic ''TyCounter ['updateTyCounter, 'queryTyCounter]
---
--- Terms
-data TmCounter = TmCounter !Integer deriving Typeable
-
-deriveSafeCopy 0 'base ''TmCounter
-
-updateTmCounter :: Update TmCounter Integer
-updateTmCounter =
-    do TmCounter n <- get
-       let n' = succ n
-       put (TmCounter n')
-       return n'
-
-queryTmCounter :: Query TmCounter Integer
-queryTmCounter =
-    do TmCounter n <- ask
-       return n
-
-makeAcidic ''TmCounter ['updateTmCounter, 'queryTmCounter]
---
--- Flags
-data BenignFlags = BenignFlags !(Map String Bool) deriving Typeable
-
-deriveSafeCopy 0 'base ''BenignFlags
-
-insertFlag :: String -> Bool -> Update BenignFlags ()
-insertFlag ty flag = 
-    do BenignFlags m <- get
-       put (BenignFlags (mapInsert ty flag m))
-
-lookupFlag :: String -> Query BenignFlags (Maybe Bool)
-lookupFlag ty =
-    do BenignFlags m <- ask
-       return (mapAssoc ty m)
-makeAcidic ''BenignFlags ['insertFlag, 'lookupFlag]
---
---
-
 -- Monad
+-- State Types
+newtype Proofs = Proofs (Hash.HashMap Text HOLThm) deriving Eq
+instance SafeCopy Proofs where
+    getCopy = contain $ fmap (Proofs . Hash.fromList) safeGet
+    putCopy (Proofs hm) = contain . safePut $ Hash.toList hm
+
+
+data ProofState = ProofState
+  { _proofs :: Proofs
+  , _benignFlags :: !(Map String Bool)
+  , _tyCounter :: !Integer
+  , _tmCounter :: !Integer
+  } deriving Eq
+makeLenses ''ProofState
+
+deriveSafeCopy 0 'base ''ProofState
+
+putProofState :: ProofState -> Update ProofState ()
+putProofState = put
+
+getProofState :: Query ProofState ProofState
+getProofState = ask
+
+makeAcidic ''ProofState ['putProofState, 'getProofState]
+
+initProofState :: ProofState
+initProofState = ProofState (Proofs Hash.empty) mapEmpty 0 0
+
+-- Parse Context stored in HOL Monad for efficiency
+data ParseContext = ParseContext
+    { _typeConstants :: !(Map Text TypeOp)
+    , _termConstants :: !(Map Text HOLTerm)
+    , _typeAbbrevs :: !(Map Text HOLType)
+    , _prefixes :: ![Text] 
+    , _binders :: ![Text]
+    , _tyBinders :: ![Text]
+    , _infixes :: ![(Text, (Int, Text))]
+    , _interface :: ![(Text, (Text, HOLType))]
+    , _overloads :: !(Map Text HOLType)
+    , _hidden :: ![Text]
+    , _lefts     :: ![(Text, Int)]
+    , _rights    :: ![(Text, Int)]
+    , _unspaced  :: ![Text]
+    , _prebroken :: ![Text]
+    } deriving (Eq, Lift)
+makeLenses ''ParseContext
+
+deriveSafeCopy 0 'base ''ParseContext
+
+putParseContext :: ParseContext -> Update ParseContext ()
+putParseContext = put
+
+getParseContext :: Query ParseContext ParseContext
+getParseContext = ask
+
+makeAcidic ''ParseContext ['putParseContext, 'getParseContext]
+
+-- | The initial parser context.
+initParseContext :: ParseContext
+initParseContext = ParseContext 
+    initTypeConstants initTermConstants mapEmpty [] 
+    initBinderOps initTyBinderOps initInfixOps [] mapEmpty []
+    (grabInfix "left" initInfixOps) (grabInfix "right" initInfixOps)
+    initUnspaced initPrebroken
+  where initBinderOps :: [Text]
+        initBinderOps = ["\\"]
+
+        initTyBinderOps :: [Text]
+        initTyBinderOps = ["\\\\"]
+
+        initInfixOps :: [(Text, (Int, Text))]
+        initInfixOps = [("=", (12, "right"))]
+
+        initUnspaced :: [Text]
+        initUnspaced = [",", "..", "$"]
+
+        initPrebroken :: [Text]
+        initPrebroken = ["==>"]
+        
+        grabInfix :: Text -> [(Text, (Int, Text))] -> [(Text, Int)]
+        grabInfix a = mapFilter $ \ (x, (n, a')) -> 
+            if a == a' then return (x, n) else fail' "grabInfix"
+
+-- Overall State
+data HOLState = HOLState
+  { _proofState :: ProofState
+  , _parseContext' :: ParseContext
+  }
+makeLenses ''HOLState
+
 -- HOL method types
 {-|
   The 'HOL' monad structures computations in the HaskHOL system at the stateful
@@ -230,8 +254,7 @@ makeAcidic ''BenignFlags ['insertFlag, 'lookupFlag]
 -}
 newtype HOL cls thry a = 
     HOL { -- not exposed to the user
-          runHOLUnsafe :: IORef (Hash.HashMap Text HOLThm) -> String -> [String]
-                       -> IO a
+          runHOLUnsafe :: IORef HOLState -> String -> [String] -> IO a
         } deriving Typeable
 
 -- | The classification tag for theory extension computations.
@@ -265,19 +288,31 @@ runHOLUnsafe' :: Bool -> HOL cls thry a -> String -> [String] -> IO a
 runHOLUnsafe' fl m new mods =
     do dir <- getDataDir
        let new' = dir `combine` new
-           open = openLocalState' (Proofs Hash.empty) (dir `combine` "Proofs")
-       acid <- open
-       prfs <- query acid GetProofs
-       closeAcidState acid
-       ref <- newIORef prfs
+           openProof = openLocalState' initProofState (dir `combine` "Proofs")
+           openParse = openLocalState' initParseContext new'
+       acidProof <- openProof
+       prfs <- query acidProof GetProofState
+       closeAcidState acidProof
+       acidParse <- openParse
+       parser <- query acidParse GetParseContext
+       closeAcidState acidParse
+       ref <- newIORef $ HOLState prfs parser
        runHOLUnsafe m ref new' mods `E.finally` when fl 
-         (do prfs' <- readIORef ref
+         (do st <- readIORef ref
+             let prfs' = st ^. proofState
+                 parser' = st ^. parseContext'
              when (prfs' /= prfs) $
-               do acid' <- open
-                  update acid' $ InsertProofs prfs'
-                  createCheckpoint acid'
-                  createArchive acid'
-                  closeAcidState acid')
+               do acidProof' <- openProof
+                  update acidProof' $ PutProofState prfs'
+                  createCheckpoint acidProof'
+                  createArchive acidProof'
+                  closeAcidState acidProof'
+             when (parser' /= parser) $
+               do acidParse' <- openParse
+                  update acidParse' $ PutParseContext parser'
+                  createCheckpoint acidParse'
+                  createArchive acidParse'
+                  closeAcidState acidParse')
 
 {-| 
   Runs a 'HOL' 'Proof' computation using a provided 'TheoryPath'. 
@@ -486,6 +521,30 @@ extendTheory old modname m =
         m' = coerce m in
       TheoryPath (ctxtName (undefined :: new)) (Just old') modname m'
 
+-- Printer Context Helpers
+parseContext :: HOL cls thry ParseContext
+parseContext = HOL $ \ ref _ _ ->
+    do st <- readIORef ref
+       return $! st ^. parseContext'
+
+parseContextCache :: HOL cls thry ParseContext
+parseContextCache =
+    do acid <- openLocalStateHOL initParseContext
+       ctxt <- queryHOL acid GetParseContext
+       closeAcidStateHOL acid
+       return ctxt
+
+viewParseContext :: Getting a ParseContext a -> HOL cls thry a
+viewParseContext f = view f `fmap` parseContext
+
+overParseContext :: Setting (->) ParseContext ParseContext a a -> (a -> a) 
+                 -> HOL Theory thry ()
+overParseContext f p = HOL $ \ ref _ _ ->
+    atomicModifyIORef' ref (\ st -> (over (parseContext' . f) p st, ()))
+
+testParseContext :: Optical (->) (->) (Const Bool) ParseContext ParseContext a a
+                 -> (a -> Bool) -> HOL cls thry Bool
+testParseContext f p = views f p `fmap` parseContext
 
 -- define own versions of IO functions so they can be used external to kernel
 {-| 
@@ -630,10 +689,9 @@ tyToIndex _ =
 
 -- used internally by set/unsetBenignFlag
 modBenignFlag :: BenignFlag a => Bool -> a -> HOL cls thry ()
-modBenignFlag val flag =
-    do acid <- openLocalStateHOL (BenignFlags mapEmpty)
-       updateHOLUnsafe acid (InsertFlag (tyToIndex flag) val)
-       closeAcidStateHOL acid
+modBenignFlag val flag = HOL $ \ ref _ _ ->
+    atomicModifyIORef' ref (\ st ->
+      (over (proofState . benignFlags) (mapInsert (tyToIndex flag) val) st, ()))
 
 {-|
   Adds a new, or modifies an existing, benign flag to be 'True'.  Benign flags 
@@ -682,11 +740,10 @@ unsetBenignFlag = modBenignFlag False
   is returned. Thus, this function never fails.
 -}
 getBenignFlag :: BenignFlag a => a -> HOL cls thry Bool
-getBenignFlag flag =
-    do acid <- openLocalStateHOL (BenignFlags mapEmpty)
-       val <- queryHOL acid (LookupFlag (tyToIndex flag))
-       closeAcidStateHOL acid
-       return $! fromMaybe (initFlagValue flag) val
+getBenignFlag flag = HOL $ \ ref _ _ ->
+    do st <- readIORef ref
+       let val = mapAssoc (tyToIndex flag) $ st ^. proofState . benignFlags
+       return $! tryd (initFlagValue flag) val
 
 -- Fresh Name Generation
 
@@ -694,21 +751,21 @@ getBenignFlag flag =
   Increments the term counter stored in the context, returning the new value.
 -}
 tickTermCounter :: HOL cls thry Integer
-tickTermCounter =
-    do acid <- openLocalStateHOL (TmCounter 0)
-       n <- updateHOLUnsafe acid UpdateTmCounter
-       closeAcidStateHOL acid
-       return n
+tickTermCounter = HOL $ \ ref _ _ ->
+    do st <- readIORef ref
+       let n = st ^. proofState . tmCounter
+       atomicModifyIORef' ref 
+         (\ st' -> (over (proofState . tmCounter) succ st', n))
 
 {-|
   Increments the type counter stored in the context, returning the new value.
 -}
 tickTypeCounter :: HOL cls thry Integer
-tickTypeCounter =
-    do acid <- openLocalStateHOL (TyCounter 0)
-       n <- updateHOLUnsafe acid UpdateTyCounter
-       closeAcidStateHOL acid
-       return n
+tickTypeCounter = HOL $ \ ref _ _ ->
+    do st <- readIORef ref
+       let n = st ^. proofState . tyCounter
+       atomicModifyIORef' ref 
+         (\ st' -> (over (proofState . tyCounter) succ st', n))
 
 {-|
   The 'newFlag' splice can be used to automatically construct a new benign flag
@@ -734,23 +791,24 @@ newFlag flag val =
        return [ty, cls]
 
 -- Proof Caching
-getProofInternal :: Text -> IORef (Hash.HashMap Text HOLThm) -> IO HOLThm 
-                 -> IO HOLThm
+getProofInternal :: Text -> IORef HOLState -> IO HOLThm -> IO HOLThm
 getProofInternal lbl ref job =
-    do hm <- readIORef ref
-       case Hash.lookup lbl hm of
+    do st <- readIORef ref
+       let Proofs sthm = st ^. proofState . proofs
+       case Hash.lookup lbl sthm of
          Just th -> return th
          Nothing -> job
 
-cacheProofInternal :: Text -> IORef (Hash.HashMap Text HOLThm) -> String 
-                   -> [String] -> HOL Proof thry HOLThm -> IO HOLThm
+cacheProofInternal :: Text -> IORef HOLState -> String -> [String] 
+                   -> HOL Proof thry HOLThm -> IO HOLThm
 cacheProofInternal lbl ref tp mods prf =
     getProofInternal lbl ref $
       let lbl' = unpack lbl in
         do putStrLn ("proving: " ++ lbl')
            th <- runHOLUnsafe prf ref tp mods
            putStrLn (lbl' ++ " proved.")
-           atomicModifyIORef' ref (\ x -> (Hash.insert lbl th x, th))
+           atomicModifyIORef' ref (\ st -> (over (proofState . proofs) 
+             (\ (Proofs hm) -> Proofs $ Hash.insert lbl th hm) st, th))
 
 {-| 
   An "unsafe" version of 'cacheProof' that uses the current working theory
@@ -822,9 +880,10 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
   where cacheProofs' :: Text -> HOL cls thry' HOLThm
         cacheProofs' lbl = HOL $ \ ref _ mods ->
             getProofInternal lbl ref $
-              do hm <- readIORef ref
-                 let qths = mapFilter (maybeToFail "cacheProofs" . 
-                                       (`Hash.lookup` hm)) lbls
+              do st <- readIORef ref
+                 let Proofs sthm = st ^. proofState . proofs
+                     qths = mapFilter (maybeToFail "cacheProofs" . 
+                                       (`Hash.lookup` sthm)) lbls
                  unless (null qths) . fail $
                    "cacheProofs: some provided labels clash with " ++
                    "existing theorems."
@@ -836,26 +895,8 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                    "cacheProofs: number of labels does not match " ++
                    "number of theorems."
                  let hm' = Hash.fromList $ zip lbls ths
-                 atomicModifyIORef' ref (\ x -> 
-                   let hm'' = Hash.union x hm'
-                       Just th = Hash.lookup lbl hm'' in (hm'', th))
-
-{-# NOINLINE counter #-}
-counter :: IORef Int
-counter = unsafePerformIO $ newIORef 0
-
-{-|
-  An unsafe version of 'genVarWithName' that attempts to create a fresh variable
-  using a global counter, atomically updated via 'unsafePerformIO'.  Useful if
-  fresh name generation is the only side effect of a function.
--}
-{-# NOINLINE unsafeGenVarWithName #-}
-unsafeGenVarWithName :: Text -> HOLType -> HOLTerm
-unsafeGenVarWithName n ty = 
-    unsafePerformIO $ atomicModifyIORef counter 
-      (\ x -> (succ x, VarIn (n `Lib.append` Lib.pack (show x)) ty))
-
--- | A version of 'genVarWithNamePure' that defaults to the prefix \"__\".
-{-# NOINLINE unsafeGenVar #-}
-unsafeGenVar :: HOLType -> HOLTerm
-unsafeGenVar = unsafeGenVarWithName "__"
+                 atomicModifyIORef' ref (\ st' -> 
+                   let Proofs sthm' = st' ^. proofState . proofs
+                       hm'' = Hash.union sthm' hm'
+                       Just th = Hash.lookup lbl hm'' in 
+                     (Lens.set (proofState . proofs) (Proofs hm'') st', th))

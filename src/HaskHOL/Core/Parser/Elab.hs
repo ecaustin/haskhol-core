@@ -20,9 +20,11 @@ module HaskHOL.Core.Parser.Elab
 
 import HaskHOL.Core.Lib hiding (ask)
 import HaskHOL.Core.Kernel
+import HaskHOL.Core.Basics hiding (mkConst, mkType, mkBinder, mkMConst, mkGAbs)
+import qualified HaskHOL.Core.Basics as B
+import HaskHOL.Core.State.Monad
 
 import HaskHOL.Core.Parser.Lib hiding ((<|>), gets)
-import HaskHOL.Core.Parser.Prims
 
 import Control.Lens hiding (op, cons, snoc)
 import Control.Monad.ST
@@ -241,8 +243,7 @@ pmkNumeral = PComb numeral . pmkNumeralRec
   Also used to check for cyclic occurances, i.e. a system type variable exists
   as a sub-term of the provided term.
 -}
-istrivial :: (MonadCatch m, MonadThrow m) 
-          => PEnv -> Integer -> PreType -> m Bool
+istrivial :: MonadCatch m => PEnv -> Integer -> PreType -> m Bool
 istrivial _ _ PTyCon{} = return False
 istrivial env x (STyVar y)
     | y == x = return True
