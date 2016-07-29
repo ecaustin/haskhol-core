@@ -1,5 +1,5 @@
-{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, FlexibleContexts,
-             ImplicitParams, ScopedTypeVariables, TypeFamilies #-}
+{-# LANGUAGE ConstraintKinds, FlexibleContexts, FlexibleInstances, 
+             ImplicitParams, MultiParamTypeClasses, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.State
   Copyright: (c) Evan Austin 2015
@@ -296,7 +296,7 @@ constants =
   provided term constant name is not defined.
 -}
 getConstType :: Text -> HOL cls thry HOLType
-getConstType = let ?constants = constants in O.getConstType
+getConstType = let ?constants = constants in getConstType
 
 {-
   Primitive term constant construction function.  Used by newConstant,
@@ -325,9 +325,20 @@ newConstant name pty =
           else do ty <- toHTy pty
                   newConstant' name $ newPrimitiveConst name ty
 
-type TypeSubstHOL l r ty1 ty2 cls thry =
-  (TypeSubst ty1 ty2, Overload ty1 l, Overload ty2 r,
-   OverloadTy ty1 l cls thry, OverloadTy ty2 r cls thry)
+class TypeSubstHOL a b cls thry where
+    mkConstHOL :: (?constants :: HOL cls thry (Map Text HOLTerm)) 
+               => Text -> [(a, b)] -> HOL cls thry HOLTerm
+
+instance (HOLTypeRep l cls thry, HOLTypeRep r cls thry) => 
+         TypeSubstHOL l r cls thry where
+    mkConstHOL op = O.mkConst op <=< mapM (toHTy `ffCombM` toHTy)
+
+instance HOLTypeRep r cls thry => TypeSubstHOL TypeOp r cls thry where
+    mkConstHOL op = O.mkConst op <=< mapM (return `ffCombM` toHTy)
+
+instance TypeSubstHOL TypeOp TypeOp cls thry where
+    mkConstHOL = O.mkConst
+
 {-|
   Constructs a specific instance of a term constant when provided with its name
   and a type substition environment.  Throws a 'HOLException' in the 
@@ -337,12 +348,9 @@ type TypeSubstHOL l r ty1 ty2 cls thry =
 
   * The provided name is not a currently defined constant.
 -}
-mkConst :: forall l r ty1 ty2 cls thry. TypeSubstHOL l r ty1 ty2 cls thry 
+mkConst :: TypeSubstHOL l r cls thry 
         => Text -> [(l, r)] -> HOL cls thry HOLTerm
-mkConst op = let ?constants = constants in
-             let fun :: [(ty1, ty2)] -> HOL cls thry HOLTerm
-                 fun = O.mkConst op in
-               overload1 fun
+mkConst = let ?constants = constants in mkConstHOL
 
 {-| 
   A version of 'mkConst' that accepts a triplet of type substitition 
@@ -355,7 +363,7 @@ mkConst_FULL :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry,
 mkConst_FULL op = let ?constants = constants in overload1 (O.mkConst_FULL op)
          
 mkConst_NIL ::Text -> HOL cls thry HOLTerm
-mkConst_NIL = let ?constants = constants in O.mkConst_NIL
+mkConst_NIL = let ?constants = constants in mkConst_NIL
 
 -- State for Axioms     
 

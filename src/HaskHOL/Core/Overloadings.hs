@@ -1,6 +1,5 @@
-{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, FlexibleContexts, 
-             FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables, 
-             TypeFamilies #-}
+{-# LANGUAGE ConstraintKinds, FlexibleContexts, FlexibleInstances, 
+             MultiParamTypeClasses, TypeFamilies #-}
 module HaskHOL.Core.Overloadings
     ( module HaskHOL.Core.Kernel
     , module HaskHOL.Core.Basics
@@ -169,18 +168,35 @@ varSubst :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry,
 varSubst = overload2 K.varSubst
 
 
--- Is there a cleaner way to do this?
-type InstHOL a b ty1 ty2 cls thry =
-  (Inst ty1 ty2, Overload ty1 a, Overload ty2 b, 
-   OverloadTy ty1 a cls thry, OverloadTy ty2 b cls thry)
+-- Is there a cleaner way to do this? Overloading requires ambiguous types.
+class InstHOL a b cls thry where
+  instHOL :: [(a, b)] -> HOLTerm -> HOL cls thry HOLTerm
+  instTypeHOL :: [(a, b)] -> HOLThm -> HOL cls thry HOLThm
 
-inst :: forall a b ty1 ty2 tm cls thry. 
-        (InstHOL a b ty1 ty2 cls thry, HOLTermRep tm cls thry) 
+instance (HOLTypeRep l cls thry, HOLTypeRep r cls thry) => 
+         InstHOL l r cls thry where
+    instHOL penv tm =
+        do env <- mapM (toHTy `ffCombM` toHTy) penv
+           return $! K.inst env tm
+    instTypeHOL penv thm =
+        do env <- mapM (toHTy `ffCombM` toHTy) penv
+           return $! K.primINST_TYPE env thm
+
+instance HOLTypeRep r cls thry => InstHOL TypeOp r cls thry where
+    instHOL penv tm = 
+        do env <- mapM (return `ffCombM` toHTy) penv
+           return $! K.inst env tm
+    instTypeHOL penv thm = 
+        do env <- mapM (return `ffCombM` toHTy) penv
+           return $! K.primINST_TYPE env thm
+
+instance InstHOL TypeOp TypeOp cls thry where
+    instHOL penv tm = return $! K.inst penv tm
+    instTypeHOL penv thm = return $! K.primINST_TYPE penv thm
+
+inst :: (InstHOL a b cls thry, HOLTermRep tm cls thry) 
      => [(a, b)] -> tm -> HOL cls thry HOLTerm
-inst = 
-  let fun :: [(ty1, ty2)] -> HOLTerm -> HOL cls thry HOLTerm
-      fun x = return . K.inst x in
-    overload2 fun
+inst penv = overload1 (instHOL penv)
 
 -- Kernel Theorem Functions
 
@@ -249,13 +265,9 @@ primDEDUCT_ANTISYM = overload2 (\ x -> return . K.primDEDUCT_ANTISYM x)
   A redefinition of 'K.primINST_TYPE' to overload it for all valid theorem
   representations as defined by 'HOLThmRep'.
 -}
-primINST_TYPE :: forall a b ty1 ty2 thm cls thry.
-                 (InstHOL a b ty1 ty2 cls thry, HOLThmRep thm cls thry) 
+primINST_TYPE :: (InstHOL a b cls thry, HOLThmRep thm cls thry) 
               => [(a, b)] -> thm -> HOL cls thry HOLThm
-primINST_TYPE = 
-  let fun :: [(ty1, ty2)] -> HOLThm -> HOL cls thry HOLThm
-      fun x = return . K.primINST_TYPE x in
-    overload2 fun
+primINST_TYPE penv = overload1 (instTypeHOL penv)
 
 {-| 
   A redefinition of 'K.primINST_TYPE_FULL' to overload it for all valid theorem
