@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternSynonyms, ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-|
   Module:    HaskHOL.Core.Basics
   Copyright: (c) Evan Austin 2015

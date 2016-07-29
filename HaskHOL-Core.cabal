@@ -20,7 +20,7 @@ data-files: .dummy
 library
     default-language:  Haskell2010
     default-extensions:  DeriveDataTypeable, OverloadedStrings,
-                         QuasiQuotes, TemplateHaskell
+                         PatternSynonyms, QuasiQuotes, TemplateHaskell
     build-depends:   base >= 4.9 && < 5.0
                    , ghc-prim >= 0.5
                    , template-haskell >= 2.11

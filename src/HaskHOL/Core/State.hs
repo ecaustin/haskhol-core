@@ -53,15 +53,17 @@ module HaskHOL.Core.State
     , printDebug
       -- * Stateful Re-Exports
     , module HaskHOL.Core.State.Monad
-    , module O
+    , module HaskHOL.Core.Overloadings
     ) where
 
 import HaskHOL.Core.Lib
-import HaskHOL.Core.Kernel
+import HaskHOL.Core.Kernel hiding (destEq, typeOf, mkVar)
 import HaskHOL.Core.State.Monad hiding
   (typeAbbrevs, infixes, prefixes, tyBinders, binders)
 import HaskHOL.Core.Parser.Rep
 
+import HaskHOL.Core.Overloadings hiding
+  (getConstType, mkConst_NIL, mkConst_FULL, mkConst, mkFunTy, mkType)
 import qualified HaskHOL.Core.Overloadings as O
 
 -- New flags and extensions
@@ -182,7 +184,7 @@ makeAcidic ''TheCoreDefinitions
 genVarWithName :: HOLTypeRep ty cls thry => Text -> ty -> HOL cls thry HOLTerm
 genVarWithName n ty =
     do count <- tickTermCounter
-       O.mkVar (n `append` textShow count) ty
+       mkVar (n `append` textShow count) ty
 
 -- | A version of 'genVarWithName' that defaults to the prefix \"_\".
 genVar :: HOLTypeRep ty cls thry => ty -> HOL cls thry HOLTerm
@@ -264,7 +266,7 @@ newType name arity =
   * A type operator is applied to zero arguments.
 -}
 mkType :: HOLTypeRep ty cls thry => Text -> [ty] -> HOL cls thry HOLType
-mkType op = let ?types = types in O.overload1 (O.mkType op)
+mkType op = let ?types = types in overload1 (O.mkType op)
 
 {-|
   Constructs a function type safely using 'mkType'.  Should never fail provided
@@ -272,7 +274,7 @@ mkType op = let ?types = types in O.overload1 (O.mkType op)
 -}
 mkFunTy :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
         => ty1 -> ty2 -> HOL cls thry HOLType
-mkFunTy = let ?types = types in O.overload2 O.mkFunTy
+mkFunTy = let ?types = types in overload2 O.mkFunTy
 
 -- State for Constants
 {-|
@@ -324,8 +326,8 @@ newConstant name pty =
                   newConstant' name $ newPrimitiveConst name ty
 
 type TypeSubstHOL l r ty1 ty2 cls thry =
-  (TypeSubst ty1 ty2, O.Overload ty1 l, O.Overload ty2 r,
-   O.OverloadTy ty1 l cls thry, O.OverloadTy ty2 r cls thry)
+  (TypeSubst ty1 ty2, Overload ty1 l, Overload ty2 r,
+   OverloadTy ty1 l cls thry, OverloadTy ty2 r cls thry)
 {-|
   Constructs a specific instance of a term constant when provided with its name
   and a type substition environment.  Throws a 'HOLException' in the 
@@ -340,7 +342,7 @@ mkConst :: forall l r ty1 ty2 cls thry. TypeSubstHOL l r ty1 ty2 cls thry
 mkConst op = let ?constants = constants in
              let fun :: [(ty1, ty2)] -> HOL cls thry HOLTerm
                  fun = O.mkConst op in
-               O.overload1 fun
+               overload1 fun
 
 {-| 
   A version of 'mkConst' that accepts a triplet of type substitition 
@@ -350,7 +352,7 @@ mkConst_FULL :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry,
                  HOLTypeRep ty3 cls thry)
              => Text -> ([(ty1, ty2)], [(TypeOp, ty3)], [(TypeOp, TypeOp)]) 
              -> HOL cls thry HOLTerm
-mkConst_FULL op = let ?constants = constants in O.overload1 (O.mkConst_FULL op)
+mkConst_FULL op = let ?constants = constants in overload1 (O.mkConst_FULL op)
          
 mkConst_NIL ::Text -> HOL cls thry HOLTerm
 mkConst_NIL = let ?constants = constants in O.mkConst_NIL
@@ -389,7 +391,7 @@ newAxiom name ptm =
              return th
          Nothing ->
              do tm <- toHTm ptm
-                ty <- O.typeOf tm
+                ty <- typeOf tm
                 failWhen (return $! ty /= tyBool) "newAxiom: Not a proposition."
                 let th = axiomThm tm
                 acid' <- openLocalStateHOL (TheAxioms mapEmpty)
