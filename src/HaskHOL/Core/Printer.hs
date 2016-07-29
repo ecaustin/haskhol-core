@@ -47,7 +47,7 @@ import Prelude hiding ((<$>))
 import HaskHOL.Core.Lib hiding (ask, base)
 import HaskHOL.Core.Kernel
 import HaskHOL.Core.State.Monad
-import HaskHOL.Core.Basics hiding (destComb)
+import HaskHOL.Core.Basics
 
 import Control.Lens hiding (Const, op, cons, snoc)
 import Control.Monad.ST
@@ -449,7 +449,7 @@ destClauses tm =
               return (c:cs)
       else do c <- destClause tm
               return [c]
-  where destClause :: MonadThrow m => HOLTerm -> m [HOLTerm]
+  where destClause :: HOLTerm -> m [HOLTerm]
         destClause tm' =
             do (_, pbod) <- stripExists' `fmap` (body =<< body tm')
                let (s, args) = stripComb pbod

@@ -41,7 +41,6 @@ import HaskHOL.Core.Ext.QQ
 
 import Language.Haskell.TH (Q, Dec, Exp)
 import Language.Haskell.TH.Quote (QuasiQuoter)
-import Language.Haskell.TH.Syntax  
 
 import Prelude hiding (FilePath)
 

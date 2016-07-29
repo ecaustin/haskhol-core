@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, OverloadedStrings, TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances, ImplicitParams, OverloadedStrings, 
+             TypeSynonymInstances #-}
 {-|
   Module:    HaskHOL.Core.Parser.Elab
   Copyright: (c) Evan Austin 2015
@@ -20,9 +21,8 @@ module HaskHOL.Core.Parser.Elab
 
 import HaskHOL.Core.Lib hiding (ask)
 import HaskHOL.Core.Kernel
-import HaskHOL.Core.Basics hiding (mkConst, mkType, mkBinder, mkMConst, mkGAbs)
-import qualified HaskHOL.Core.Basics as B
 import HaskHOL.Core.State.Monad
+import qualified HaskHOL.Core.Basics.Stateful as B
 
 import HaskHOL.Core.Parser.Lib hiding ((<|>), gets)
 
@@ -105,66 +105,20 @@ getTypeConstants :: ElabM s (Map Text TypeOp)
 getTypeConstants = viewElabState $ view (parseCtxt . typeConstants)
 
 getConstType :: Text -> ElabM s HOLType
-getConstType name = 
-    do consts <- getConstants
-       (typeOf `fmap` mapAssoc name consts) <?> "getConstType"
+getConstType = let ?constants = getConstants in B.getConstType
 
 mkConst :: Text -> SubstTrip -> ElabM s HOLTerm
-mkConst name pat =
-    do consts <- getConstants
-       flip instConstFull pat =<< mapAssoc name consts <?> "mkConst"
+mkConst = let ?constants = getConstants in B.mkConst_FULL
 
 mkMConst :: Text -> HOLType -> ElabM s HOLTerm
-mkMConst name ty =
-    do uty <- getConstType name <?> "mkMConst: not a constant name."
-       (mkConst name =<< typeMatch uty ty ([], [], [])) <?>
-         "mkMConst: generic type cannot be instantiated."
-
-mkBinder :: Text -> HOLTerm -> HOLTerm -> ElabM s HOLTerm
-mkBinder op v tm = 
-    (do c <- mkConst op ([(tyA, typeOf v)], [], [])
-        mkComb c =<< mkAbs v tm)
-    <?> "mkBinder: " ++ show op
+mkMConst = let ?constants = getConstants in B.mkMConst
 
 mkGAbs :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
-mkGAbs tm1@Var{} tm2 =
-    mkAbs tm1 tm2 <?> "mkGAbs: simple abstraction failed"
-mkGAbs tm1 tm2 = 
-    let fvs = frees tm1 in
-      (do fTy <- mkType "fun" [typeOf tm1, typeOf tm2]
-          let f = variant (frees tm1++frees tm2) $ mkVar "f" fTy
-          tm1' <- mkComb f tm1
-          bodIn <- flip (foldrM (mkBinder "!")) fvs =<< mkGEq tm1' tm2
-          bndr <- mkConst "GABS" ([(tyA, fTy)], [], [])
-          mkComb bndr =<< mkAbs f bodIn)
-      <?> "mkGAbs"
-  where mkGEq :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
-        mkGEq t1 t2 = 
-          do p <- mkConst "GEQ" ([(tyA, typeOf t1)], [], [])
-             tm <- mkComb p t1
-             mkComb tm t2 
+mkGAbs = let ?types = getTypeConstants
+             ?constants = getConstants in B.mkGAbs
 
 mkType :: Text -> [HOLType] -> ElabM s HOLType
-mkType name args =
-    do consts <- getTypeConstants
-       case runCatch $ mapAssoc name consts of
-         Right tyOp -> mkApp tyOp
-         Left{}
-             | null args -> 
-                   fail' "mkType: type operator applied to zero args."
-             | otherwise ->
-                   do name' <- if textHead name == '_' 
-                               then return $! textTail name 
-                               else do addWarning True $ "type " ++ show name ++
-                                         " has not been defined. " ++
-                                         "Defaulting to type operator variable."
-                                       return name
-                      mkApp $ mkTypeOpVar name'
-  where mkApp :: TypeOp -> ElabM s HOLType
-        mkApp tyOp =
-            case tyApp tyOp args of
-               Right res -> return res
-               Left{} -> fail' "mkApp"
+mkType = let ?types = getTypeConstants in B.mkType
 
 destSTV :: MonadThrow m => PreType -> m Integer
 destSTV (STyVar n) = return n

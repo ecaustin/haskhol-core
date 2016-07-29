@@ -376,8 +376,7 @@ class TypeSubst a b => Inst a b where
       method is not exposed to the user.  Call the 'inst' or 'instFull' function
       instead.
     -}
-    instTyAbs :: (MonadCatch m, MonadThrow m) 
-              => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
+    instTyAbs :: MonadCatch m => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
 
 instance Inst HOLType HOLType where
     instTyAbs env tyenv tm@(TyAbsIn tv t) = 
@@ -432,7 +431,7 @@ inst theta tm =
       Left _ -> tm
 
 -- Used internally by inst and instTyAbs both.  Not exposed to the user.
-instRec :: (MonadCatch m, MonadThrow m, Inst a b) 
+instRec :: (MonadCatch m, Inst a b) 
         => HOLTermEnv -> [(a, b)] -> HOLTerm -> m HOLTerm
 instRec env tyenv tm@(VarIn n ty) =
     let tm' = mkVar n $ typeSubst tyenv ty in
@@ -499,9 +498,11 @@ tmEq ty =
       PrimitiveIn
 
 -- | The pattern synonym equivalent of 'tmEq'.
+pattern TmEq :: HOLType -> HOLTerm
 pattern TmEq ty <- Const "=" (TyFun ty (TyFun _ TyBool))
 
 -- | The infix pattern synonym for term equality.
+pattern (:=) :: HOLTerm -> HOLTerm -> HOLTerm
 pattern l := r <- Comb (Comb (Const "=" _) l) r
 
 -- | Predicate for equations, i.e. terms of the form @l = r@.

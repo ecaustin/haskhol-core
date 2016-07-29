@@ -1,5 +1,5 @@
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, MultiParamTypeClasses, 
-             PatternSynonyms, TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, FlexibleContexts,
+             ImplicitParams, ScopedTypeVariables, TypeFamilies #-}
 {-|
   Module:    HaskHOL.Core.State
   Copyright: (c) Evan Austin 2015
@@ -34,6 +34,9 @@ module HaskHOL.Core.State
     , mkConst
     , mkConst_FULL
     , mkConst_NIL
+    , genVarWithName
+    , genVar
+    , genSmallTyVar
     -- * Stateful Theory Extension Primitives
     , axioms
     , newAxiom
@@ -50,15 +53,15 @@ module HaskHOL.Core.State
     , printDebug
       -- * Stateful Re-Exports
     , module HaskHOL.Core.State.Monad
-    , module HaskHOL.Core.Overloadings
+    , module O
     ) where
 
 import HaskHOL.Core.Lib
+import HaskHOL.Core.Kernel
 import HaskHOL.Core.State.Monad hiding
   (typeAbbrevs, infixes, prefixes, tyBinders, binders)
+import HaskHOL.Core.Parser.Rep
 
-import HaskHOL.Core.Overloadings hiding
-  (mkType, mkConst, mkConst_NIL, mkConst_FULL, mkFunTy)
 import qualified HaskHOL.Core.Overloadings as O
 
 -- New flags and extensions
@@ -179,7 +182,7 @@ makeAcidic ''TheCoreDefinitions
 genVarWithName :: HOLTypeRep ty cls thry => Text -> ty -> HOL cls thry HOLTerm
 genVarWithName n ty =
     do count <- tickTermCounter
-       mkVar (n `append` textShow count) ty
+       O.mkVar (n `append` textShow count) ty
 
 -- | A version of 'genVarWithName' that defaults to the prefix \"_\".
 genVar :: HOLTypeRep ty cls thry => ty -> HOL cls thry HOLTerm
@@ -261,25 +264,7 @@ newType name arity =
   * A type operator is applied to zero arguments.
 -}
 mkType :: HOLTypeRep ty cls thry => Text -> [ty] -> HOL cls thry HOLType
-mkType name args =
-    do consts <- types
-       case runCatch $ mapAssoc name consts of
-         Right tyOp -> tyApp tyOp args <?> 
-                        "mkType: type constructor application failed"
-         Left{} -> 
-           {- This seemed to be the easiest way to supress superfluous warnings
-              when parsing type operators. -}
-           do name' <- if textHead name == '_'
-                       then return $! textTail name
-                       else printDebugLn 
-                              ("warning - mkType: type " ++ show name ++ 
-                               " has not been defined.  Defaulting to type " ++ 
-                               "operator variable.") $ 
-                              return name
-              failWhen (return $ null args)
-                "mkType: type operator applied to zero args."
-              tyApp (mkTypeOpVar name') args <?> 
-                "mkType: type operator variable application failed"
+mkType op = let ?types = types in O.overload1 (O.mkType op)
 
 {-|
   Constructs a function type safely using 'mkType'.  Should never fail provided
@@ -287,10 +272,7 @@ mkType name args =
 -}
 mkFunTy :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry)
         => ty1 -> ty2 -> HOL cls thry HOLType
-mkFunTy pty1 pty2 = 
-    do ty1 <- toHTy pty1
-       ty2 <- toHTy pty2
-       mkType "fun" [ty1, ty2]
+mkFunTy = let ?types = types in O.overload2 O.mkFunTy
 
 -- State for Constants
 {-|
@@ -312,10 +294,7 @@ constants =
   provided term constant name is not defined.
 -}
 getConstType :: Text -> HOL cls thry HOLType
-getConstType name =
-    do consts <- constants
-       (typeOf =<< mapAssoc name consts) <?> 
-         "getConstType: not a constant name"
+getConstType = let ?constants = constants in O.getConstType
 
 {-
   Primitive term constant construction function.  Used by newConstant,
@@ -344,19 +323,9 @@ newConstant name pty =
           else do ty <- toHTy pty
                   newConstant' name $ newPrimitiveConst name ty
 
-class TypeSubstHOL a b cls thry where
-    instConstHOL :: HOLTerm -> [(a, b)] -> HOL cls thry HOLTerm
-
-instance (HOLTypeRep l cls thry, HOLTypeRep r cls thry) => 
-         TypeSubstHOL l r cls thry where
-    instConstHOL tm = instConst tm <=< mapM (toHTy `ffCombM` toHTy)
-
-instance HOLTypeRep r cls thry => TypeSubstHOL TypeOp r cls thry where
-    instConstHOL tm = instConst tm <=< mapM (return `ffCombM` toHTy)
-
-instance TypeSubstHOL TypeOp TypeOp cls thry where
-    instConstHOL = instConst
-
+type TypeSubstHOL l r ty1 ty2 cls thry =
+  (TypeSubst ty1 ty2, O.Overload ty1 l, O.Overload ty2 r,
+   O.OverloadTy ty1 l cls thry, O.OverloadTy ty2 r cls thry)
 {-|
   Constructs a specific instance of a term constant when provided with its name
   and a type substition environment.  Throws a 'HOLException' in the 
@@ -366,11 +335,12 @@ instance TypeSubstHOL TypeOp TypeOp cls thry where
 
   * The provided name is not a currently defined constant.
 -}
-mkConst :: TypeSubstHOL l r cls thry => Text -> [(l, r)] -> HOL cls thry HOLTerm
-mkConst name tyenv =
-    do consts <- constants
-       tm <- mapAssoc name consts <?> "mkConst: not a constant name"
-       instConstHOL tm tyenv <?> "mkConst: instantiation failed"
+mkConst :: forall l r ty1 ty2 cls thry. TypeSubstHOL l r ty1 ty2 cls thry 
+        => Text -> [(l, r)] -> HOL cls thry HOLTerm
+mkConst op = let ?constants = constants in
+             let fun :: [(ty1, ty2)] -> HOL cls thry HOLTerm
+                 fun = O.mkConst op in
+               O.overload1 fun
 
 {-| 
   A version of 'mkConst' that accepts a triplet of type substitition 
@@ -380,16 +350,10 @@ mkConst_FULL :: (HOLTypeRep ty1 cls thry, HOLTypeRep ty2 cls thry,
                  HOLTypeRep ty3 cls thry)
              => Text -> ([(ty1, ty2)], [(TypeOp, ty3)], [(TypeOp, TypeOp)]) 
              -> HOL cls thry HOLTerm
-mkConst_FULL name (penv, ptyops, ops) =
-    do env <- mapM (toHTy `ffCombM` toHTy) penv
-       tyops <- mapM (return `ffCombM` toHTy) ptyops
-       consts <- constants
-       tm <- mapAssoc name consts <?>  "mkConstFull: not a constant name"
-       instConstFull tm (env, tyops, ops) <?> 
-         "mkConstFull: instantiation failed"
+mkConst_FULL op = let ?constants = constants in O.overload1 (O.mkConst_FULL op)
          
 mkConst_NIL ::Text -> HOL cls thry HOLTerm
-mkConst_NIL tm = mkConst tm ([] :: HOLTypeEnv)
+mkConst_NIL = let ?constants = constants in O.mkConst_NIL
 
 -- State for Axioms     
 
@@ -425,7 +389,7 @@ newAxiom name ptm =
              return th
          Nothing ->
              do tm <- toHTm ptm
-                ty <- typeOf tm
+                ty <- O.typeOf tm
                 failWhen (return $! ty /= tyBool) "newAxiom: Not a proposition."
                 let th = axiomThm tm
                 acid' <- openLocalStateHOL (TheAxioms mapEmpty)
