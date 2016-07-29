@@ -120,7 +120,7 @@ import Data.Text (pack)
 
 -- Util Imports
 import Control.Lens hiding (set)
-import qualified Control.Lens as Lens
+import qualified Control.Lens as L
 
 -- interpreter stuff
 import Data.Coerce
@@ -268,8 +268,9 @@ data Proof deriving Typeable
 mkProofGeneral :: HOL Proof thry a -> HOL cls thry a
 mkProofGeneral = coerce
 
-runHOLInternal :: Bool -> HOL cls thry a -> TheoryPath thry -> IO a
-runHOLInternal fl m tp =
+runHOLInternal :: Bool -> Maybe ProofState -> HOL cls thry a -> TheoryPath thry 
+               -> IO (a, ProofState)
+runHOLInternal fl prfs m tp =
     do dir <- getDataDir 
        let new = newTP tp
            newFp = dir `combine` new
@@ -282,22 +283,27 @@ runHOLInternal fl m tp =
                  echo $ pack "...This may take a while."
                  liftIO $ 
                    runHOLTheory (loadTP tp) (oldTP tp) new
-       runHOLUnsafe' fl m newFp mods
+       runHOLUnsafe' fl prfs m newFp mods
 
-runHOLUnsafe' :: Bool -> HOL cls thry a -> String -> [String] -> IO a
-runHOLUnsafe' fl m new mods =
+runHOLUnsafe' :: Bool -> Maybe ProofState -> HOL cls thry a -> String 
+              -> [String] -> IO (a, ProofState)
+runHOLUnsafe' fl initPrfs m new mods =
     do dir <- getDataDir
-       let new' = dir `combine` new
-           openProof = openLocalState' initProofState (dir `combine` "Proofs")
-           openParse = openLocalState' initParseContext new'
-       acidProof <- openProof
-       prfs <- query acidProof GetProofState
-       closeAcidState acidProof
+       let openProof = openLocalState' initProofState (dir `combine` "Proofs")
+           openParse = openLocalState' initParseContext new
+       prfs <- case initPrfs of
+                 Just prfst -> return prfst
+                 Nothing -> do acidProof <- openProof
+                               prfst <- query acidProof GetProofState
+                               closeAcidState acidProof
+                               return prfst
        acidParse <- openParse
        parser <- query acidParse GetParseContext
        closeAcidState acidParse
        ref <- newIORef $ HOLState prfs parser
-       runHOLUnsafe m ref new' mods `E.finally` when fl 
+       (do res <- runHOLUnsafe m ref new mods
+           st <- readIORef ref
+           return (res, st ^. proofState)) `E.finally` when fl 
          (do st <- readIORef ref
              let prfs' = st ^. proofState
                  parser' = st ^. parseContext'
@@ -322,7 +328,7 @@ runHOLUnsafe' fl m new mods =
   modified.
 -}
 runHOLProof :: Bool -> HOL Proof thry a -> TheoryPath thry -> IO a
-runHOLProof = runHOLInternal
+runHOLProof fl prf tp = fst `fmap` runHOLInternal fl Nothing prf tp
 
 {-| 
   Evaluates a 'HOL' computation by copying the contents of a provided 
@@ -333,27 +339,30 @@ runHOLProof = runHOLInternal
 runHOLTheory :: HOL cls thry a -> Maybe (TheoryPath thry) -> String -> IO a
 runHOLTheory m (Just old) new =
     do dir <- getDataDir 
-       let old' = mkFilePath $ dir `combine` newTP old
-           new' = mkFilePath $ dir `combine` new
+       let newFP = dir `combine` new
+           old' = mkFilePath $ dir `combine` newTP old
+           new' = mkFilePath newFP
            mods = buildModList old []
        shelly . print_stderr False $ 
-         do unlessM (test_d old') . liftIO $ 
-              runHOLInternal True (return ()) old
+         do unlessM (test_d old') . liftIO $ fst `fmap`
+              runHOLInternal True Nothing (return ()) old
             whenM (test_d new') . echo . pack $
               "runHOL: acid-state directory, " ++
               new ++ ", already exists.  Overwriting."
             rm_rf new'
             cp_r old' new'
-       runHOLUnsafe' True m new mods
+       fst `fmap` runHOLUnsafe' True Nothing m newFP mods
 -- really only used for creating BaseCtxt to prevent needing dummy data files
 runHOLTheory m Nothing new =
     do dir <- getDataDir
-       let new' = mkFilePath $ dir `combine` new
+       let newFP = dir `combine` new
+           new' = mkFilePath newFP
        shelly . print_stderr False . unlessM (test_d new') $
          do echo . pack $ "runHOL: acid-state director, " ++ new ++
                           " does not exist.  Using empty directory."
             mkdir new'
-       runHOLUnsafe' True m new ["HaskHOL.Core.State.Monad"]
+       fst `fmap` runHOLUnsafe' True Nothing m newFP 
+                    ["HaskHOL.Core.State.Monad"]
 
 {-|
   Used to dynamically evaluate a 'HOL' computation using the 'interpret'
@@ -799,16 +808,18 @@ getProofInternal lbl ref job =
          Just th -> return th
          Nothing -> job
 
-cacheProofInternal :: Text -> IORef HOLState -> String -> [String] 
-                   -> HOL Proof thry HOLThm -> IO HOLThm
-cacheProofInternal lbl ref tp mods prf =
+cacheProofInternal :: Text -> IORef HOLState -> IO (HOLThm, ProofState) 
+                   -> IO HOLThm
+cacheProofInternal lbl ref prf =
     getProofInternal lbl ref $
       let lbl' = unpack lbl in
         do putStrLn ("proving: " ++ lbl')
-           th <- runHOLUnsafe prf ref tp mods
+           (th, prfs)  <- prf
            putStrLn (lbl' ++ " proved.")
-           atomicModifyIORef' ref (\ st -> (over (proofState . proofs) 
-             (\ (Proofs hm) -> Proofs $ Hash.insert lbl th hm) st, th))
+           atomicModifyIORef' ref (\ st -> 
+             let prfs' = over proofs (\ (Proofs hm) -> 
+                           Proofs $ Hash.insert lbl th hm) prfs in
+               (L.set proofState prfs' st, th))
 
 {-| 
   An "unsafe" version of 'cacheProof' that uses the current working theory
@@ -817,7 +828,10 @@ cacheProofInternal lbl ref tp mods prf =
 -}
 unsafeCacheProof :: Text -> HOL Proof thry HOLThm -> HOL cls thry HOLThm
 unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
-    cacheProofInternal lbl ref tp mods prf
+    cacheProofInternal lbl ref $ 
+      do th <- runHOLUnsafe prf ref tp mods
+         st <- readIORef ref
+         return (th, st ^. proofState)
 
 {-|
   The 'cacheProof' method stores or retrieves a theorem from the proof
@@ -849,8 +863,10 @@ unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
 cacheProof :: PolyTheory thry thry' => Text -> TheoryPath thry 
            -> HOL Proof thry HOLThm 
            -> HOL cls thry' HOLThm
-cacheProof lbl tp prf = HOL $ \ ref _ mods ->
-    cacheProofInternal lbl ref (newTP tp) mods prf
+cacheProof lbl tp prf = HOL $ \ ref _ _ ->
+    do st <- readIORef ref
+       cacheProofInternal lbl ref $ 
+         runHOLInternal False (Just $ st ^. proofState) prf tp
 
 {-| 
   Retrieves a proof from the cache given its label.  
@@ -878,10 +894,11 @@ cacheProofs :: forall cls thry thry'. PolyTheory thry thry' => [Text]
             -> [HOL cls thry' HOLThm]
 cacheProofs lbls tp prf = map cacheProofs' lbls
   where cacheProofs' :: Text -> HOL cls thry' HOLThm
-        cacheProofs' lbl = HOL $ \ ref _ mods ->
+        cacheProofs' lbl = HOL $ \ ref _ _ ->
             getProofInternal lbl ref $
               do st <- readIORef ref
-                 let Proofs sthm = st ^. proofState . proofs
+                 let prfs = st ^. proofState
+                     Proofs sthm = prfs ^. proofs
                      qths = mapFilter (maybeToFail "cacheProofs" . 
                                        (`Hash.lookup` sthm)) lbls
                  unless (null qths) . fail $
@@ -889,14 +906,15 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                    "existing theorems."
                  let lbls' = unpack $ T.unwords lbls
                  putStrLn ("proving: " ++ lbls')
-                 ths <- runHOLUnsafe prf ref (newTP tp) mods
+                 (ths, prfs') <- runHOLInternal False (Just prfs) prf tp
                  putStrLn (lbls' ++ " proved.")
                  when (length lbls /= length ths) . fail $
                    "cacheProofs: number of labels does not match " ++
                    "number of theorems."
                  let hm' = Hash.fromList $ zip lbls ths
                  atomicModifyIORef' ref (\ st' -> 
-                   let Proofs sthm' = st' ^. proofState . proofs
+                   let Proofs sthm' = prfs' ^. proofs
                        hm'' = Hash.union sthm' hm'
-                       Just th = Hash.lookup lbl hm'' in 
-                     (Lens.set (proofState . proofs) (Proofs hm'') st', th))
+                       Just th = Hash.lookup lbl hm''
+                       prfs'' = L.set proofs (Proofs hm'') prfs' in
+                     (L.set proofState prfs'' st', th))
