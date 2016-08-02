@@ -89,8 +89,9 @@ module HaskHOL.Core.State.Monad
     , unsafeCacheProof
     , cacheProofs
     , getProof
-      -- * 
+      -- * Re-export
     , Constraint
+    , runHOLUnsafe'
     ) where
 
 import HaskHOL.Core.Lib hiding (combine, pack)
@@ -289,7 +290,7 @@ runHOLUnsafe' :: Bool -> Maybe ProofState -> HOL cls thry a -> String
               -> [String] -> IO (a, ProofState)
 runHOLUnsafe' fl initPrfs m new mods =
     do dir <- getDataDir
-       let openProof = openLocalState' initProofState (dir `combine` "Proofs")
+       let openProof = openLocalState' initProofState dir
            openParse = openLocalState' initParseContext new
        prfs <- case initPrfs of
                  Just prfst -> return prfst
@@ -861,9 +862,10 @@ cacheProof lbl tp prf = HOL $ \ ref _ _ ->
            st <- readIORef ref
            (th, prfs) <- runHOLInternal False (Just $ st ^. proofState) prf tp
            putStrLn (lbl' ++ " proved.")
-           atomicModifyIORef' ref $ \ st ->
-             (over (proofState . proofs) 
-               (\ (Proofs prfs) -> Proofs $ Hash.insert lbl th prfs) st, th)
+           atomicModifyIORef' ref $ \ st' ->
+             let prfs' = over proofs (\ (Proofs ps) -> 
+                           Proofs $ Hash.insert lbl th ps) prfs in
+               (L.set proofState prfs' st', th)
 
 {-| 
   Retrieves a proof from the cache given its label.  

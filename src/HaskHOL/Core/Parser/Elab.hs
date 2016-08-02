@@ -105,20 +105,20 @@ getTypeConstants :: ElabM s (Map Text TypeOp)
 getTypeConstants = viewElabState $ view (parseCtxt . typeConstants)
 
 getConstType :: Text -> ElabM s HOLType
-getConstType = let ?constants = getConstants in B.getConstType
+getConstType = let ?constsFun = getConstants in B.getConstType
 
 mkConst :: Text -> SubstTrip -> ElabM s HOLTerm
-mkConst = let ?constants = getConstants in B.mkConst_FULL
+mkConst = let ?constsFun = getConstants in B.mkConst_FULL
 
 mkMConst :: Text -> HOLType -> ElabM s HOLTerm
-mkMConst = let ?constants = getConstants in B.mkMConst
+mkMConst = let ?constsFun = getConstants in B.mkMConst
 
 mkGAbs :: HOLTerm -> HOLTerm -> ElabM s HOLTerm
-mkGAbs = let ?types = getTypeConstants
-             ?constants = getConstants in B.mkGAbs
+mkGAbs = let ?typesFun = getTypeConstants
+             ?constsFun = getConstants in B.mkGAbs
 
 mkType :: Text -> [HOLType] -> ElabM s HOLType
-mkType = let ?types = getTypeConstants in B.mkType
+mkType = let ?typesFun = getTypeConstants in B.mkType
 
 destSTV :: MonadThrow m => PreType -> m Integer
 destSTV (STyVar n) = return n
