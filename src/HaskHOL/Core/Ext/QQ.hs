@@ -105,4 +105,4 @@ txt = QuasiQuoter quoteStrExp nothing nothing nothing
 
 liftParseContext :: TheoryPath thry -> Q Exp
 liftParseContext ctxt =
-    lift =<< runIO (runHOLProof False parseContext ctxt)
+    lift =<< runIO (runHOLProof False parseContextCache ctxt)

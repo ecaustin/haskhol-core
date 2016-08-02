@@ -51,9 +51,31 @@ module HaskHOL.Core.State
     , warn
     , printDebugLn
     , printDebug
-      -- * Stateful Re-Exports
+      -- * Stateful Re-Exports and Overloadings
     , module HaskHOL.Core.State.Monad
     , module HaskHOL.Core.Overloadings
+    , mkMConst
+    , listMkIComb
+    , mkBinary
+    , mkBinder
+    , mkTyBinder
+    , mkIff
+    , mkConj
+    , mkImp
+    , mkForall
+    , mkExists
+    , mkDisj
+    , mkNeg
+    , mkUExists
+    , mkTyAll
+    , mkTyEx
+    , listMkConj
+    , listMkDisj
+    , listMkForall
+    , listMkExists
+    , mkGAbs
+    , listMkGAbs
+    , mkLet
     ) where
 
 import HaskHOL.Core.Lib
@@ -63,7 +85,10 @@ import HaskHOL.Core.State.Monad hiding
 import HaskHOL.Core.Parser.Rep
 
 import HaskHOL.Core.Overloadings hiding
-  (getConstType, mkConst_NIL, mkConst_FULL, mkConst, mkFunTy, mkType)
+  (getConstType, mkConst_NIL, mkConst_FULL, mkConst, mkFunTy, mkType,
+   mkMConst, listMkIComb, mkBinary, mkBinder, mkTyBinder, mkIff, mkConj, mkImp, 
+   mkForall, mkExists, mkDisj, mkNeg, mkUExists, mkTyAll, mkTyEx, listMkConj, 
+   listMkDisj, listMkForall, listMkExists, mkGAbs, listMkGAbs, mkLet)
 import qualified HaskHOL.Core.Overloadings as O
 
 -- New flags and extensions
@@ -435,8 +460,8 @@ definitions =
   'newDefinedConst' for more details.
 -}
 newBasicDefinition :: HOLTermRep tm Theory thry 
-                   => Text -> tm -> HOL Theory thry HOLThm
-newBasicDefinition lbl ptm =
+                   => (Text, tm) -> HOL Theory thry HOLThm
+newBasicDefinition (lbl, ptm) =
     getBasicDefinition lbl
     <|> do tm <- toHTm ptm
            pat <- destEq tm
@@ -545,3 +570,91 @@ printDebugBase fn str x =
        if debug
           then fn str >> x
           else x
+
+-- Overloadings
+mkMConst :: HOLTypeRep ty cls thry => Text -> ty -> HOL cls thry HOLTerm
+mkMConst op = let ?constants = constants in overload1 (O.mkMConst op)
+
+listMkIComb :: HOLTermRep tm cls thry => Text -> [tm] -> HOL cls thry HOLTerm
+listMkIComb op = let ?constants = constants in overload1 (O.listMkIComb op)
+
+mkBinary :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+         => Text -> tm1 -> tm2 -> HOL cls thry HOLTerm
+mkBinary op = let ?constants = constants in overload2 (O.mkBinary op)
+
+mkBinder :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+         => Text -> tm1 -> tm2 -> HOL cls thry HOLTerm
+mkBinder op = let ?constants = constants in overload2 (O.mkBinder op)
+
+mkTyBinder :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
+           => Text -> ty -> tm -> HOL cls thry HOLTerm
+mkTyBinder op = let ?constants = constants in overload2 (O.mkTyBinder op)
+
+mkIff :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+      => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkIff = let ?constants = constants in overload2 O.mkIff
+
+mkConj :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+       => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkConj = let ?constants = constants in overload2 O.mkConj
+
+mkImp :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+      => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkImp = let ?constants = constants in overload2 O.mkImp
+
+mkForall :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+         => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkForall = let ?constants = constants in overload2 O.mkForall
+
+mkExists :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+         => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkExists = let ?constants = constants in overload2 O.mkExists
+
+mkDisj :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+       => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkDisj = let ?constants = constants in overload2 O.mkDisj
+
+mkNeg :: HOLTermRep tm cls thry => tm -> HOL cls thry HOLTerm
+mkNeg = let ?constants = constants in overload1 O.mkNeg
+
+mkUExists :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+          => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkUExists = let ?constants = constants in overload2 O.mkUExists
+
+mkTyAll :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
+        => ty -> tm -> HOL cls thry HOLTerm
+mkTyAll = let ?constants = constants in overload2 O.mkTyAll
+
+mkTyEx :: (HOLTypeRep ty cls thry, HOLTermRep tm cls thry)
+       => ty -> tm -> HOL cls thry HOLTerm
+mkTyEx = let ?constants = constants in overload2 O.mkTyEx
+
+listMkConj :: HOLTermRep tm cls thry => [tm] -> HOL cls thry HOLTerm
+listMkConj = let ?constants = constants in overload1 O.listMkConj
+
+listMkDisj :: HOLTermRep tm cls thry => [tm] -> HOL cls thry HOLTerm
+listMkDisj = let ?constants = constants in overload1 O.listMkDisj
+
+listMkForall :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+          => [tm1] -> tm2 -> HOL cls thry HOLTerm
+listMkForall = let ?constants = constants in overload2 O.listMkForall
+
+listMkExists :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+          => [tm1] -> tm2 -> HOL cls thry HOLTerm
+listMkExists = let ?constants = constants in overload2 O.listMkExists
+
+mkGAbs :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+       => tm1 -> tm2 -> HOL cls thry HOLTerm
+mkGAbs = let ?types = types
+             ?constants = constants in overload2 O.mkGAbs
+
+listMkGAbs :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry)
+           => [tm1] -> tm2 -> HOL cls thry HOLTerm
+listMkGAbs = let ?types = types
+                 ?constants = constants in overload2 O.listMkGAbs
+
+mkLet :: (HOLTermRep tm1 cls thry, HOLTermRep tm2 cls thry,
+          HOLTermRep tm3 cls thry)
+      => [(tm1, tm2)] -> tm3 -> HOL cls thry HOLTerm
+mkLet = let ?types = types
+            ?constants = constants in overload2 O.mkLet

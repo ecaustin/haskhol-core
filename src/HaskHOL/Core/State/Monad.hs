@@ -808,19 +808,6 @@ getProofInternal lbl ref job =
          Just th -> return th
          Nothing -> job
 
-cacheProofInternal :: Text -> IORef HOLState -> IO (HOLThm, ProofState) 
-                   -> IO HOLThm
-cacheProofInternal lbl ref prf =
-    getProofInternal lbl ref $
-      let lbl' = unpack lbl in
-        do putStrLn ("proving: " ++ lbl')
-           (th, prfs)  <- prf
-           putStrLn (lbl' ++ " proved.")
-           atomicModifyIORef' ref (\ st -> 
-             let prfs' = over proofs (\ (Proofs hm) -> 
-                           Proofs $ Hash.insert lbl th hm) prfs in
-               (L.set proofState prfs' st, th))
-
 {-| 
   An "unsafe" version of 'cacheProof' that uses the current working theory
   to evaluate a proof instead of a provided theory context.  Useful for
@@ -828,10 +815,14 @@ cacheProofInternal lbl ref prf =
 -}
 unsafeCacheProof :: Text -> HOL Proof thry HOLThm -> HOL cls thry HOLThm
 unsafeCacheProof lbl prf = HOL $ \ ref tp mods ->
-    cacheProofInternal lbl ref $ 
-      do th <- runHOLUnsafe prf ref tp mods
-         st <- readIORef ref
-         return (th, st ^. proofState)
+    getProofInternal lbl ref $
+      let lbl' = unpack lbl in
+        do putStrLn ("proving: " ++ lbl')
+           th <- runHOLUnsafe prf ref tp mods
+           putStrLn (lbl' ++ " proved.")
+           atomicModifyIORef' ref $ \ st ->
+             (over (proofState . proofs) 
+               (\ (Proofs prfs) -> Proofs $ Hash.insert lbl th prfs) st, th)
 
 {-|
   The 'cacheProof' method stores or retrieves a theorem from the proof
@@ -864,9 +855,15 @@ cacheProof :: PolyTheory thry thry' => Text -> TheoryPath thry
            -> HOL Proof thry HOLThm 
            -> HOL cls thry' HOLThm
 cacheProof lbl tp prf = HOL $ \ ref _ _ ->
-    do st <- readIORef ref
-       cacheProofInternal lbl ref $ 
-         runHOLInternal False (Just $ st ^. proofState) prf tp
+    getProofInternal lbl ref $
+      let lbl' = unpack lbl in
+        do putStrLn ("proving: " ++ lbl')
+           st <- readIORef ref
+           (th, prfs) <- runHOLInternal False (Just $ st ^. proofState) prf tp
+           putStrLn (lbl' ++ " proved.")
+           atomicModifyIORef' ref $ \ st ->
+             (over (proofState . proofs) 
+               (\ (Proofs prfs) -> Proofs $ Hash.insert lbl th prfs) st, th)
 
 {-| 
   Retrieves a proof from the cache given its label.  
