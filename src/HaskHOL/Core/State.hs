@@ -341,8 +341,8 @@ newConstant' name c =
   this new term to the current working theory.  Throws a 'HOLException' when a
   term of the same name has already been declared.
 -}
-newConstant :: HOLTypeRep ty Theory thry => Text -> ty -> HOL Theory thry ()
-newConstant name pty =
+newConstant :: HOLTypeRep ty Theory thry => (Text, ty) -> HOL Theory thry ()
+newConstant (name, pty) =
     do cond <- can getConstType name
        if cond
           then printDebugLn ("newConstant: ignoring redefintion of " ++ 
@@ -414,8 +414,8 @@ axioms =
 
   * An axiom with the provided name has already been declared.
 -}
-newAxiom :: HOLTermRep tm Theory thry => Text -> tm -> HOL Theory thry HOLThm
-newAxiom name ptm =
+newAxiom :: HOLTermRep tm Theory thry => (Text, tm) -> HOL Theory thry HOLThm
+newAxiom (name, ptm) =
     do acid <- openLocalStateHOL (TheAxioms mapEmpty)
        qth <- queryHOL acid (GetAxiom' name)
        closeAcidStateHOL acid
