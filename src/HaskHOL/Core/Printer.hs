@@ -40,6 +40,7 @@ module HaskHOL.Core.Printer
     , getPrec
     , setPrec
     , ShowHOL(..)
+    , showHOL
     , printHOL
     ) where
 
@@ -515,56 +516,63 @@ class ShowHOL a where
       A version of 'show' lifted to the 'HOL' monad for context sensitive pretty
       printers.
     -}
-    showHOL :: a -> PrintM s Doc
+    buildDoc :: a -> PrintM s Doc
 
-    showHOLList :: [a] -> PrintM s Doc
-    showHOLList = showHOLList' brackets comma <=< mapM showHOL
+    buildDocList :: [a] -> PrintM s Doc
+    buildDocList = buildDocList' brackets comma <=< mapM buildDoc
 
 instance ShowHOL a => ShowHOL [a] where
-    showHOL = showHOLList
+    buildDoc = buildDocList
     
 instance (ShowHOL a, ShowHOL b) => ShowHOL (a, b) where
-    showHOL (a, b) = showHOLList' parens comma =<< sequence
-                       [showHOL a, showHOL b]
+    buildDoc (a, b) = buildDocList' parens comma =<< sequence
+                       [buildDoc a, buildDoc b]
 
 instance (ShowHOL a, ShowHOL b, ShowHOL c) => ShowHOL (a, b, c) where
-    showHOL (a, b, c) = showHOLList' parens comma =<< sequence
-                          [showHOL a, showHOL b, showHOL c]
+    buildDoc (a, b, c) = buildDocList' parens comma =<< sequence
+                          [buildDoc a, buildDoc b, buildDoc c]
 
 instance (ShowHOL a, ShowHOL b,ShowHOL c, ShowHOL d) => 
          ShowHOL (a, b, c, d) where
-    showHOL (a, b, c, d) = showHOLList' parens comma =<< sequence
-                             [ showHOL a, showHOL b
-                             , showHOL c, showHOL d ]
+    buildDoc (a, b, c, d) = buildDocList' parens comma =<< sequence
+                             [ buildDoc a, buildDoc b
+                             , buildDoc c, buildDoc d ]
 
 -- Prints a list of strings provided a wrapper function and seperator document.
-showHOLList' :: (Doc -> Doc) -> Doc -> [Doc] -> PrintM s Doc
-showHOLList' wrap sepr =
-    return . wrap . sep . showHOLListRec sepr
+buildDocList' :: (Doc -> Doc) -> Doc -> [Doc] -> PrintM s Doc
+buildDocList' wrap sepr =
+    return . wrap . sep . buildDocListRec sepr
   
 -- Useful to have at top level for ppThm.
-showHOLListRec :: Doc -> [Doc] -> [Doc]
-showHOLListRec _ [] = [empty]
-showHOLListRec _ [x] = [x]
-showHOLListRec sepr (x:xs) = (x <> sepr <> space) : showHOLListRec sepr xs
+buildDocListRec :: Doc -> [Doc] -> [Doc]
+buildDocListRec _ [] = [empty]
+buildDocListRec _ [x] = [x]
+buildDocListRec sepr (x:xs) = (x <> sepr <> space) : buildDocListRec sepr xs
 
 -- orphan instances
 instance ShowHOL HOLType where
-    showHOL ty = (char ':' <>) `fmap` ppType ty
+    buildDoc ty = (char ':' <>) `fmap` ppType ty
 
 instance ShowHOL HOLTerm where
-    showHOL = ppTerm
+    buildDoc = ppTerm
 
 instance ShowHOL HOLThm where
-    showHOL = ppThm
+    buildDoc = ppThm
+
+showHOL :: ShowHOL a => a -> HOL cls thry String
+showHOL x = 
+    do ctxt <- parseContext
+       either (fail . show) (return . show) $ runST
+         (do ref <- newSTRef $ initPrintState ctxt
+             runCatchT $ runReaderT (buildDoc x) ref)
 
 {-| 
   Prints a HOL object with a new line.  A composition of 'putStrLnHOL' and
-  'showHOL'.
+  'buildDoc'.
 -}
 printHOL :: ShowHOL a => a -> HOL cls thry ()
 printHOL x = 
     do ctxt <- parseContext
        either (fail . show) putDocHOL $ runST
          (do ref <- newSTRef $ initPrintState ctxt
-             runCatchT $ runReaderT (showHOL x) ref)
+             runCatchT $ runReaderT (buildDoc x) ref)

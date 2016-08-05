@@ -26,6 +26,9 @@ library
                    , template-haskell >= 2.11
                    , acid-state >= 0.14
                    , ansi-wl-pprint >= 0.6
+                   , cereal-conduit >= 0.7
+                   , conduit >= 1.2
+                   , conduit-extra >= 1.1
                    , containers >= 0.5
                    , deepseq >= 1.4
                    , exceptions >= 0.8

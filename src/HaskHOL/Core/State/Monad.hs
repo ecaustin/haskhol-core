@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
 {-# LANGUAGE ConstraintKinds, DataKinds, DeriveLift, EmptyDataDecls, 
-             ScopedTypeVariables, TypeFamilies, TypeOperators, 
+             ScopedTypeVariables, TypeFamilies, TypeApplications, TypeOperators,
              UndecidableInstances #-}
 {-|
   Module:    HaskHOL.Core.State.Monad
@@ -89,6 +89,8 @@ module HaskHOL.Core.State.Monad
     , unsafeCacheProof
     , cacheProofs
     , getProof
+      -- * Value Serialization
+    , serializeValue
       -- * Re-export
     , Constraint
     , runHOLUnsafe'
@@ -115,9 +117,12 @@ import Language.Haskell.TH.Syntax (Lift(..), Module(..), modString)
 import Prelude hiding (FilePath)
 import Paths_haskhol_core
 import Shelly hiding (put, get)
---import Filesystem.Path (dirname)
 import System.FilePath (combine)
 import Data.Text (pack)
+import System.IO (withBinaryFile, IOMode(..), Handle)
+import Data.Conduit
+import Data.Conduit.Binary
+import Data.Conduit.Cereal
 
 -- Util Imports
 import Control.Lens hiding (set)
@@ -130,7 +135,7 @@ import Language.Haskell.Interpreter.Unsafe
 
 -- Monad
 -- State Types
-newtype Proofs = Proofs (Hash.HashMap Text HOLThm) deriving Eq
+data Proofs = Proofs (Hash.HashMap Text HOLThm) deriving Eq
 instance SafeCopy Proofs where
     getCopy = contain $ fmap (Proofs . Hash.fromList) safeGet
     putCopy (Proofs hm) = contain . safePut $ Hash.toList hm
@@ -156,6 +161,18 @@ makeAcidic ''ProofState ['putProofState, 'getProofState]
 
 initProofState :: ProofState
 initProofState = ProofState (Proofs Hash.empty) mapEmpty 0 0
+
+data Serials = Serials !(Map String String)
+deriveSafeCopy 0 'base ''Serials
+
+putSerials :: Serials -> Update Serials ()
+putSerials = put
+
+getSerials :: Query Serials Serials
+getSerials = ask
+
+makeAcidic ''Serials ['putSerials, 'getSerials]
+
 
 -- Parse Context stored in HOL Monad for efficiency
 data ParseContext = ParseContext
@@ -277,7 +294,7 @@ runHOLInternal fl prfs m tp =
            newFp = dir `combine` new
            mods = buildModList tp []
        shelly $
-         do cond <- test_d . fromText $ pack newFp  
+         do cond <- test_d $ mkFilePath newFp  
             unless cond $
               do echo . pack $ 
                    "Note: Rebuilding theory context for " ++ new
@@ -917,3 +934,48 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                        Just th = Hash.lookup lbl hm''
                        prfs'' = L.set proofs (Proofs hm'') prfs' in
                      (L.set proofState prfs'' st', th))
+
+serializeValue :: forall a cls thry thry'. 
+                  (SafeCopy a, Typeable a, PolyTheory thry thry') 
+               => String -> TheoryPath thry 
+               -> HOL Proof thry a 
+               -> HOL cls thry' a
+serializeValue fname tp m = HOL $ \ ref _ _ ->
+    do dir <- getDataDir
+       let dir' = dir `combine` "Serials" 
+           fname' = dir' `combine` fname
+           resTy = tyToIndex (undefined :: a)
+       acid <- openLocalState' (Serials mapEmpty) dir'
+       (Serials serials) <- query acid GetSerials
+       closeAcidState acid
+       cond <- shelly $ let dir'' = mkFilePath dir' in
+                          do unlessM (test_d dir'') $ mkdir dir''
+                             test_f $ mkFilePath fname'
+       if cond
+          then case mapAssoc fname serials of
+                 Nothing -> 
+                     fail $ "serializeValue: file present, but " ++
+                            "not recorded in list of known serializations."
+                 Just ty
+                     | ty == resTy ->
+                         withBinaryFile fname' ReadMode $ \ inH -> getter inH
+                     | otherwise -> 
+                         fail $ "serializeValue: file present, but " ++
+                                "of wrong type for serialization."
+         else do st <- readIORef ref
+                 (res, prfs) <- runHOLInternal False (Just $ st ^. proofState) 
+                                  m tp
+                 withBinaryFile fname' WriteMode $ \ outH -> putter res outH
+                 acid' <- openLocalState' (Serials mapEmpty) dir'
+                 update acid' . PutSerials . Serials $ 
+                   mapInsert fname resTy serials
+                 createCheckpoint acid'
+                 createArchive acid'
+                 closeAcidState acid'
+                 atomicModifyIORef' ref $ \ st' ->
+                   (L.set proofState prfs st', res)
+  where putter :: a -> Handle -> IO ()
+        putter x outH = sourcePut (safePut x) $$ sinkHandle outH
+
+        getter :: Handle -> IO a
+        getter inH = sourceHandle inH $$ sinkGet (safeGet @a)
