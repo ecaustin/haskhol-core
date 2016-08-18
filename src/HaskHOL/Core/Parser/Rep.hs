@@ -52,7 +52,7 @@ instance HOLTypeRep Text cls thry where
                  pty <- holTypeParser ctxt x
                  tyElab ctxt pty
 
-instance HOLTypeRep (PType thry) cls thry where
+instance thry1 ~ thry2 => HOLTypeRep (PType thry1) cls thry2 where
     toHTy = serve
 
 instance HOLTypeRep PreType cls thry where
@@ -88,7 +88,7 @@ instance HOLTermRep Text cls thry where
                  ptm <- holTermParser ctxt x
                  elab ctxt ptm
 
-instance HOLTermRep (PTerm thry) cls thry where
+instance thry1 ~ thry2 => HOLTermRep (PTerm thry1) cls thry2 where
     toHTm = serve
                 
 instance HOLTermRep PreTerm cls thry where

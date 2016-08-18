@@ -55,6 +55,7 @@ module HaskHOL.Core.Lib
     , fail'
     , failWhen
     , maybeToFail
+    , eitherToFail
     , try'
     , tryd
     , test'
@@ -418,6 +419,10 @@ failWhen m str =
 -- | Converts a 'Maybe' value to a 'MonadThrow' value using 'fail''.
 maybeToFail :: MonadThrow m => String -> Maybe a -> m a
 maybeToFail str = maybe (fail' str) return
+
+-- | Converts an 'Either' value to a 'MonadThrow' value using 'fail''.
+eitherToFail :: (Show err, MonadThrow m) => Either err a -> m a
+eitherToFail = either (fail' . show) return
 
 {-| 
   Forces the evaluation of a 'Catch' computation, relying on 'error' if it 
