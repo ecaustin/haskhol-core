@@ -62,6 +62,9 @@ instance HOLTypeRep PreType cls thry where
 instance HOLTypeRep HOLType cls thry where
     toHTy = return
 
+instance HOLTypeRep (Catch HOLType) cls thry where
+    toHTy = either (fail . show) return . runCatch
+
 instance (cls1 ~ cls2, thry1 ~ thry2) => 
          HOLTypeRep (HOL cls1 thry1 HOLType) cls2 thry2 where
     toHTy = id
@@ -97,6 +100,9 @@ instance HOLTermRep PreTerm cls thry where
 
 instance  HOLTermRep HOLTerm cls thry where
     toHTm = return
+
+instance HOLTermRep (Catch HOLTerm) cls thry where
+    toHTm = either (fail . show) return . runCatch
 
 instance (cls1 ~ cls2, thry1 ~ thry2) => 
          HOLTermRep (HOL cls1 thry1 HOLTerm) cls2 thry2 where
