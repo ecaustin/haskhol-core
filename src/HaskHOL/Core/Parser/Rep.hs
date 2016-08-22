@@ -128,6 +128,9 @@ class HOLThmRep a cls thry where
 instance HOLThmRep HOLThm cls thry where
     toHThm = return
 
+instance HOLThmRep (Catch HOLThm) cls thry where
+    toHThm = either (fail . show) return . runCatch
+
 instance (cls1 ~ cls2, thry1 ~ thry2) => 
          HOLThmRep (HOL cls1 thry1 HOLThm) cls2 thry2 where
     toHThm = id
