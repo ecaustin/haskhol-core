@@ -332,7 +332,7 @@ ppConstants s hop args
              cond3 <- (test' . assoc s) `fmap` getRights
              cond4 <- (test' . assoc s) `fmap` getLefts
              cond5 <- parsesAsPrefix s
-             let base = pretty $ show s
+             let base = text $ unpack s
              return $! if cond1 || cond2 || cond3 || cond4 || cond5
                        then parens base
                        else base
@@ -482,7 +482,7 @@ ppPrefix :: Text -> HOLTerm -> PrintM s Doc
 ppPrefix s arg =
     do prec <- getPrec
        arg' <- setPrec 999 >> ppTerm arg
-       let base = pretty (show s) <+> arg'
+       let base = text (unpack s) <+> arg'
        return $! if prec == 1000 then parens base else base
 
 ppComb :: (HOLTerm, HOLTerm) -> PrintM s Doc

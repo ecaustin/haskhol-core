@@ -1,7 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
 {-# LANGUAGE ConstraintKinds, DataKinds, DeriveLift, EmptyDataDecls, 
-             ScopedTypeVariables, TypeFamilies, TypeApplications, TypeOperators,
-             UndecidableInstances #-}
+             ExistentialQuantification, FlexibleContexts, GADTs,
+             ScopedTypeVariables, TypeFamilies, TypeApplications, 
+             TypeOperators, UndecidableInstances 
+#-}
+
 {-|
   Module:    HaskHOL.Core.State.Monad
   Copyright: (c) Evan Austin 2015
@@ -84,19 +87,21 @@ module HaskHOL.Core.State.Monad
       -- * Methods Related to Fresh Name Generation
     , tickTermCounter
     , tickTypeCounter
-      -- * Proof Caching
+      -- * Value Caching and Serialization
     , cacheProof
     , unsafeCacheProof
     , cacheProofs
     , getProof
-      -- * Value Serialization
+    , Conversion(..)
+    , cacheConversion
+    , cacheNet
     , serializeValue
       -- * Re-export
     , Constraint
-    , runHOLUnsafe'
     ) where
 
 import HaskHOL.Core.Lib hiding (combine, pack)
+import HaskHOL.Core.Basics.Nets
 import HaskHOL.Core.Kernel hiding ((:=), typeOf)
 
 -- HOL Monad imports
@@ -104,6 +109,7 @@ import Data.Typeable
 import qualified Control.Exception as E
 import Data.IORef
 import GHC.Exts (Constraint)
+import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as Hash
 import Data.Acid hiding (makeAcidic, Query, Update)
 import qualified Data.Text.Lazy as T
@@ -132,6 +138,8 @@ import qualified Control.Lens as L
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
 import Language.Haskell.Interpreter.Unsafe
+
+import Unsafe.Coerce
 
 -- Monad
 -- State Types
@@ -230,11 +238,22 @@ initParseContext = ParseContext
             if a == a' then return (x, n) else fail' "grabInfix"
 
 -- Overall State
-data HOLState = HOLState
+type GConversion cls thry = (Int, Conversion cls thry)
+
+{-|
+  The 'Conversion' type is a special class of derived rules that accepts a
+  term and returns a theorem proving its equation with an equivalent term.
+-}
+data Conversion cls thry where
+  Conv :: (HOLTerm -> HOL cls thry HOLThm) -> Conversion cls thry
+  deriving Typeable
+
+data HOLState thry = HOLState
   { _proofState :: ProofState
   , _parseContext' :: ParseContext
+  , _convCache :: !(Hash.HashMap HOLTerm HOLThm)
+  , _netCache :: !(Hash.HashMap [HOLThm] (Net (GConversion Proof thry)))
   }
-makeLenses ''HOLState
 
 -- HOL method types
 {-|
@@ -272,13 +291,14 @@ makeLenses ''HOLState
 -}
 newtype HOL cls thry a = 
     HOL { -- not exposed to the user
-          runHOLUnsafe :: IORef HOLState -> String -> [String] -> IO a
+          runHOLUnsafe :: IORef (HOLState thry) -> String -> [String] -> IO a
         } deriving Typeable
 
 -- | The classification tag for theory extension computations.
 data Theory
 -- | The classification tag for proof computations.
 data Proof deriving Typeable
+makeLenses ''HOLState
 
 {-| 
   Can be used to make 'Proof' computations more general, e.g. more polymorphic.
@@ -318,7 +338,7 @@ runHOLUnsafe' fl initPrfs m new mods =
        acidParse <- openParse
        parser <- query acidParse GetParseContext
        closeAcidState acidParse
-       ref <- newIORef $ HOLState prfs parser
+       ref <- newIORef $ HOLState prfs parser Hash.empty Hash.empty
        (do res <- runHOLUnsafe m ref new mods
            st <- readIORef ref
            return (res, st ^. proofState)) `E.finally` when fl 
@@ -818,7 +838,7 @@ newFlag flag val =
        return [ty, cls]
 
 -- Proof Caching
-getProofInternal :: Text -> IORef HOLState -> IO HOLThm -> IO HOLThm
+getProofInternal :: Text -> IORef (HOLState thry) -> IO HOLThm -> IO HOLThm
 getProofInternal lbl ref job =
     do st <- readIORef ref
        let Proofs sthm = st ^. proofState . proofs
@@ -934,6 +954,28 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                        Just th = Hash.lookup lbl hm''
                        prfs'' = L.set proofs (Proofs hm'') prfs' in
                      (L.set proofState prfs'' st', th))
+
+cacheConversion :: Conversion cls thry -> Conversion cls thry
+cacheConversion (Conv cnv) = Conv $ \ tm -> HOL $ \ ref state mods ->
+    do st <- readIORef ref
+       case Hash.lookup tm $ st ^. convCache of
+         Just res -> return res
+         Nothing ->
+           do res <- runHOLUnsafe (cnv tm) ref state mods
+              atomicModifyIORef' ref $ \ st' ->
+                (over convCache (Hash.insert tm res) st', res)
+
+cacheNet :: [HOLThm] 
+         -> ([HOLThm] -> HOL Proof thry (Net (GConversion Proof thry)))
+         -> HOL cls thry (Net (GConversion Proof thry))
+cacheNet ths buildNet = HOL $ \ ref state mods ->
+    do st <- readIORef ref
+       case Hash.lookup ths $ st ^. netCache of
+         Just res -> return res
+         Nothing ->
+           do res <- runHOLUnsafe (buildNet ths) ref state mods
+              atomicModifyIORef' ref $ \ st' ->
+                (over netCache (Hash.insert ths res) st', res)
 
 serializeValue :: forall a cls thry thry'. 
                   (SafeCopy a, Typeable a, PolyTheory thry thry') 
