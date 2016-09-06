@@ -95,6 +95,8 @@ module HaskHOL.Core.State.Monad
     , Conversion(..)
     , cacheConversion
     , cacheNet
+    , cacheThms
+    , cacheFlags
     , serializeValue
       -- * Re-export
     , Constraint
@@ -109,7 +111,6 @@ import Data.Typeable
 import qualified Control.Exception as E
 import Data.IORef
 import GHC.Exts (Constraint)
-import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as Hash
 import Data.Acid hiding (makeAcidic, Query, Update)
 import qualified Data.Text.Lazy as T
@@ -139,7 +140,6 @@ import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
 import Language.Haskell.Interpreter.Unsafe
 
-import Unsafe.Coerce
 
 -- Monad
 -- State Types
@@ -253,6 +253,8 @@ data HOLState thry = HOLState
   , _parseContext' :: ParseContext
   , _convCache :: !(Hash.HashMap HOLTerm HOLThm)
   , _netCache :: !(Hash.HashMap [HOLThm] (Net (GConversion Proof thry)))
+  , _thmCache :: !(Map Text [HOLThm])
+  , _flagCache :: !(Map Text [Int])
   }
 
 -- HOL method types
@@ -338,7 +340,7 @@ runHOLUnsafe' fl initPrfs m new mods =
        acidParse <- openParse
        parser <- query acidParse GetParseContext
        closeAcidState acidParse
-       ref <- newIORef $ HOLState prfs parser Hash.empty Hash.empty
+       ref <- newIORef $ HOLState prfs parser Hash.empty Hash.empty mapEmpty mapEmpty
        (do res <- runHOLUnsafe m ref new mods
            st <- readIORef ref
            return (res, st ^. proofState)) `E.finally` when fl 
@@ -976,6 +978,26 @@ cacheNet ths buildNet = HOL $ \ ref state mods ->
            do res <- runHOLUnsafe (buildNet ths) ref state mods
               atomicModifyIORef' ref $ \ st' ->
                 (over netCache (Hash.insert ths res) st', res)
+
+cacheThms :: Text -> HOL cls thry [HOLThm] -> HOL cls thry [HOLThm]
+cacheThms lbl m = HOL $ \ ref state mods ->
+    do st <- readIORef ref
+       case mapAssoc lbl $ st ^. thmCache of
+         Just res -> return res
+         Nothing ->
+           do res <- runHOLUnsafe m ref state mods
+              atomicModifyIORef' ref $ \ st' ->
+                (over thmCache (mapInsert lbl res) st', res)
+
+cacheFlags :: Text -> HOL cls thry [Int] -> HOL cls thry [Int]
+cacheFlags lbl m = HOL $ \ ref state mods ->
+    do st <- readIORef ref
+       case mapAssoc lbl $ st ^. flagCache of
+         Just res -> return res
+         Nothing ->
+           do res <- runHOLUnsafe m ref state mods
+              atomicModifyIORef' ref $ \ st' ->
+                (over flagCache (mapInsert lbl res) st', res)
 
 serializeValue :: forall a cls thry thry'. 
                   (SafeCopy a, Typeable a, PolyTheory thry thry') 

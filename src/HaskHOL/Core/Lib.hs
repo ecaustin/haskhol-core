@@ -711,7 +711,7 @@ all2 :: MonadThrow m => (a -> b -> Bool) -> [a] -> [b] -> m Bool
 all2 f xs ys = and `fmap` map2 f xs ys
 
 {-| 
-  Separates a list of elements using a predicate.  A re-export of 'L.partition'.
+  Separates a list of elements using a predicate. Re-export of `L.partition`.
 -}
 partition :: (a -> Bool) -> [a] -> ([a], [a])
 partition = L.partition
@@ -736,13 +736,15 @@ find f = maybeToFail "find" . L.find f
 {-| 
   The monadic version of 'find'.  Fails if the monadic predicate does.
 -}
-findM :: MonadCatch m => (a -> m Bool) -> [a] -> m a
+findM :: forall m a. MonadCatch m => (a -> m Bool) -> [a] -> m a
 findM _ [] = fail' "findM"
-findM f (x:xs) =
-    do b <- f x
-       if b
-          then return x
-          else findM f xs
+findM f (x:xs) = test <|> findM f xs
+  where test :: m a
+        test =
+            do b <- f x
+               if b
+                  then return x
+                  else fail' "findM: test"
 
 {-|
   An alternative monadic version of 'find' where the predicate is a monadic
