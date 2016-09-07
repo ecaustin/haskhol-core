@@ -182,6 +182,8 @@ module HaskHOL.Core.Lib
     , textEmpty
     , textStrip
     , textShow
+    , textWords
+    , textUnwords
       -- * Re-exported 'AcidState' primitives
     , Update
     , Query
@@ -1305,9 +1307,17 @@ textEmpty = Text.empty
 textStrip :: Text -> Text
 textStrip = Text.strip
 
--- | A re-export of 'Text.show'.
+-- | A re-export of 'Text.showt'.
 textShow :: Text.TextShow a => a -> Text
 textShow = Text.fromStrict . Text.showt
+
+-- | A re-export of 'Text.words'.
+textWords :: Text -> [Text]
+textWords = Text.words
+
+-- | A re-export of 'Text.unwords'.
+textUnwords :: [Text] -> Text
+textUnwords = Text.unwords
 
 -- Acid State re-exports
 
