@@ -34,6 +34,7 @@ module HaskHOL.Core.State.Monad
     , TheoryPath
     , Module
     , thisModule'
+    , UnsafeThry(..)
     , BaseThry(..)
     , ExtThry(..)
     , CtxtName(..)
@@ -138,6 +139,7 @@ import qualified Control.Lens as L
 -- interpreter stuff
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
+import qualified Language.Haskell.Interpreter as Hint
 import Language.Haskell.Interpreter.Unsafe
 
 
@@ -415,17 +417,18 @@ runHOLTheory m Nothing new =
   The second provided argument is the list of 'String' names for the modules
   that must be imported for the computation to succeed.
 -}
-runHOLHint :: forall cls thry a. (Typeable thry, Typeable a) 
-           => String -> [String] -> HOL cls thry a
+runHOLHint :: String -> [String] -> HOL cls thry (Conversion cls thry)
 runHOLHint m mods = HOL $ \ ref tp thryMods -> 
     do r <- runInterpreter $
-                do setImports $ ["Prelude", "HaskHOL.Core"] ++ mods ++ thryMods
+                do setImports $ ["Prelude", "HaskHOL.Core"] ++ mods -- ++ thryMods
                    set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
                    unsafeSetGhcOption "-fcontext-stack=200"
-                   interpret m (as :: HOL Proof thry a)
+                   -- We can check the type here for more safety, 
+                   -- should we want to.
+                   interpret m (as :: Conversion Proof UnsafeThry)
        case r of
          Left err -> fail $ show err
-         Right res -> runHOLUnsafe res ref tp thryMods
+         Right res -> return $! coerce res
 
 instance Functor (HOL cls thry) where
     fmap = liftM
@@ -489,6 +492,8 @@ mkFilePath :: String -> FilePath
 mkFilePath = fromText . pack
 
 
+data UnsafeThry = UnsafeThry deriving Typeable
+
 -- | The 'BaseThry' type is the type of the initial working theory.
 data BaseThry = BaseThry deriving Typeable
 {-| 
@@ -532,6 +537,7 @@ instance CtxtName a => CtxtName (ExtThry a b) where
   loaded.  This should always be true.
 -}
 type family BaseCtxt a :: Constraint where
+    BaseCtxt UnsafeThry = ()
     BaseCtxt BaseThry = ()
     BaseCtxt (ExtThry a b) = BaseCtxt b
 

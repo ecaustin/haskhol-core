@@ -324,7 +324,7 @@ mkGAbs tm1 tm2 =
           mkComb bndr =<< mkAbs f bodIn) <?> "mkGAbs"
   where mkGEq :: HOLTerm -> HOLTerm -> m HOLTerm
         mkGEq l r = 
-            do op <- mkConst "GEQ" [(tyA, typeOf tm1)]
+            do op <- mkConst "GEQ" [(tyA, typeOf l)]
                mkBinop op l r
 
 -- | A specific version of 'listMkAbs' for general abstractions.
