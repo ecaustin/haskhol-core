@@ -96,6 +96,7 @@ module HaskHOL.Core.State.Monad
     , Conversion(..)
     , cacheConversion
     , cacheNet
+    , cacheNet2
     , cacheThms
     , cacheFlags
     , serializeValue
@@ -139,7 +140,6 @@ import qualified Control.Lens as L
 -- interpreter stuff
 import Data.Coerce
 import Language.Haskell.Interpreter hiding (get, lift, typeOf, name)
-import qualified Language.Haskell.Interpreter as Hint
 import Language.Haskell.Interpreter.Unsafe
 
 
@@ -241,6 +241,7 @@ initParseContext = ParseContext
 
 -- Overall State
 type GConversion cls thry = (Int, Conversion cls thry)
+type GConversion2 cls thry = (Int, (Conversion cls thry, Conversion cls thry))
 
 {-|
   The 'Conversion' type is a special class of derived rules that accepts a
@@ -253,8 +254,9 @@ data Conversion cls thry where
 data HOLState thry = HOLState
   { _proofState :: ProofState
   , _parseContext' :: ParseContext
-  , _convCache :: !(Hash.HashMap HOLTerm HOLThm)
-  , _netCache :: !(Hash.HashMap [HOLThm] (Net (GConversion Proof thry)))
+  , _convCache :: !(Hash.HashMap Text (Hash.HashMap HOLTerm HOLThm))
+  , _netCache :: !(Hash.HashMap Text (Net (GConversion Proof thry)))
+  , _netCache2 :: !(Hash.HashMap Text (Net (GConversion2 Proof thry)))
   , _thmCache :: !(Map Text [HOLThm])
   , _flagCache :: !(Map Text [Int])
   }
@@ -342,7 +344,8 @@ runHOLUnsafe' fl initPrfs m new mods =
        acidParse <- openParse
        parser <- query acidParse GetParseContext
        closeAcidState acidParse
-       ref <- newIORef $ HOLState prfs parser Hash.empty Hash.empty mapEmpty mapEmpty
+       ref <- newIORef $ HOLState prfs parser Hash.empty Hash.empty Hash.empty 
+                                  mapEmpty mapEmpty
        (do res <- runHOLUnsafe m ref new mods
            st <- readIORef ref
            return (res, st ^. proofState)) `E.finally` when fl 
@@ -418,9 +421,9 @@ runHOLTheory m Nothing new =
   that must be imported for the computation to succeed.
 -}
 runHOLHint :: String -> [String] -> HOL cls thry (Conversion cls thry)
-runHOLHint m mods = HOL $ \ ref tp thryMods -> 
+runHOLHint m mods = HOL $ \ _ _ _ -> 
     do r <- runInterpreter $
-                do setImports $ ["Prelude", "HaskHOL.Core"] ++ mods -- ++ thryMods
+                do setImports $ ["Prelude", "HaskHOL.Core"] ++ mods
                    set [languageExtensions := [OverloadedStrings, QuasiQuotes]]
                    unsafeSetGhcOption "-fcontext-stack=200"
                    -- We can check the type here for more safety, 
@@ -963,27 +966,45 @@ cacheProofs lbls tp prf = map cacheProofs' lbls
                        prfs'' = L.set proofs (Proofs hm'') prfs' in
                      (L.set proofState prfs'' st', th))
 
-cacheConversion :: Conversion cls thry -> Conversion cls thry
-cacheConversion (Conv cnv) = Conv $ \ tm -> HOL $ \ ref state mods ->
+cacheConversion :: Text -> Conversion cls thry -> Conversion cls thry
+cacheConversion lbl (Conv cnv) = Conv $ \ tm -> HOL $ \ ref state mods ->
     do st <- readIORef ref
-       case Hash.lookup tm $ st ^. convCache of
-         Just res -> return res
+       case Hash.lookup lbl $ st ^. convCache of
+         Just hmap ->
+           case Hash.lookup tm hmap of
+             Just res -> return res
+             Nothing ->
+               do res <- runHOLUnsafe (cnv tm) ref state mods
+                  let mapIns = Hash.insert lbl (Hash.insert tm res hmap)
+                  atomicModifyIORef' ref $ \ st' ->
+                    (over convCache mapIns st', res)
          Nothing ->
            do res <- runHOLUnsafe (cnv tm) ref state mods
+              let mapIns = Hash.insert lbl (Hash.singleton tm res)
               atomicModifyIORef' ref $ \ st' ->
-                (over convCache (Hash.insert tm res) st', res)
+                (over convCache mapIns st', res)
 
-cacheNet :: [HOLThm] 
-         -> ([HOLThm] -> HOL Proof thry (Net (GConversion Proof thry)))
-         -> HOL cls thry (Net (GConversion Proof thry))
-cacheNet ths buildNet = HOL $ \ ref state mods ->
+cacheNet :: Text -> HOL cls thry (Net (GConversion cls thry))
+         -> HOL cls thry (Net (GConversion cls thry))
+cacheNet lbl buildNet = HOL $ \ ref state mods ->
     do st <- readIORef ref
-       case Hash.lookup ths $ st ^. netCache of
-         Just res -> return res
+       case Hash.lookup lbl $ st ^. netCache of
+         Just res -> return $ coerce res
          Nothing ->
-           do res <- runHOLUnsafe (buildNet ths) ref state mods
+           do res <- runHOLUnsafe buildNet ref state mods
               atomicModifyIORef' ref $ \ st' ->
-                (over netCache (Hash.insert ths res) st', res)
+                (over netCache (Hash.insert lbl (coerce res)) st', res)
+
+cacheNet2 :: Text -> HOL cls thry (Net (GConversion2 cls thry))
+          -> HOL cls thry (Net (GConversion2 cls thry))
+cacheNet2 lbl buildNet = HOL $ \ ref state mods ->
+    do st <- readIORef ref
+       case Hash.lookup lbl $ st ^. netCache2 of
+         Just res -> return $ coerce res
+         Nothing ->
+           do res <- runHOLUnsafe buildNet ref state mods
+              atomicModifyIORef' ref $ \ st' ->
+                (over netCache2 (Hash.insert lbl (coerce res)) st', res)
 
 cacheThms :: Text -> HOL cls thry [HOLThm] -> HOL cls thry [HOLThm]
 cacheThms lbl m = HOL $ \ ref state mods ->
